@@ -1,0 +1,3267 @@
+if not game:IsLoaded() then game.Loaded:Wait() end
+
+local Players = game:GetService("Players")
+local RunService = game:GetService("RunService")
+local TweenService = game:GetService("TweenService")
+local HttpService = game:GetService("HttpService")
+local UserInputService = game:GetService("UserInputService")
+local InsertService = game:GetService("InsertService")
+
+local LocalPlayer = Players.LocalPlayer
+local PlayerGui = LocalPlayer:WaitForChild("PlayerGui")
+local filename = "AvatarChanger.json"
+
+task.wait(2.25)
+
+warn("[Bypass] Waiting For Anti-Cheat Initialization")
+
+local adonisDetected = false
+for _, v in pairs(game:GetDescendants()) do
+    if v.Name:lower():find("adonis") or v.Name:lower():find("anti") then
+        adonisDetected = true
+        break
+    end
+end
+
+if adonisDetected then
+    warn("[Bypass] Anti-Cheat Detected - Using Safe Mode")
+    task.wait(0.5)
+else
+    error("[Bypass] No Major Anti-Cheat Detected")
+end
+
+local protectionEnabled = false
+
+local function enableMinimalProtection()
+    if protectionEnabled then return end
+    protectionEnabled = true
+    local Players = game:GetService("Players")
+    local LocalPlayer = Players.LocalPlayer
+    
+    local lastHealth = 100
+    task.spawn(function()
+        while task.wait(0.75) do
+            if LocalPlayer.Character then
+                local humanoid = LocalPlayer.Character:FindFirstChildOfClass("Humanoid")
+                if humanoid then
+                    lastHealth = humanoid.Health
+                end
+            end
+        end
+    end)
+    warn("[Bypass] Minimal Monitoring Active")
+end
+
+warn("[Bypass] Safe To Proceed")
+
+local ANIMATION_DURATION = 0.5
+local BUTTON_HOVER_SIZE = 60
+local BUTTON_DEFAULT_SIZE = 55
+local SCREEN_PADDING = 10
+local APPLICATION_COOLDOWN = 0.3
+local FACE_CHECK_COOLDOWN = 0.5
+local FETCH_COOLDOWN = 5
+local MAX_CACHE_SIZE = 5
+local CACHE_EXPIRATION = 300
+local PREVIEW_FADE_DURATION = 0.6
+local ACCESSORY_LOAD_TIMEOUT = 3
+local EXTERNAL_CHANGE_DETECTION_DELAY = 0.5
+local REAPPLY_COOLDOWN = 2
+local MAX_REAPPLY_ATTEMPTS = 3
+local autoApplyCooldown = false
+local AUTO_APPLY_COOLDOWN_TIME = 1.25
+local previewToggleCooldown = false
+local PREVIEW_TOGGLE_COOLDOWN_TIME = 5
+
+local GOOD_AVATARS = {
+   289438135, 1707711223, 188732, 2298753899, 9119588309, 5254879171, 8595350470, 6007609888, 59357152, 124751865, 2507542655, 5019714978, 5007631110, 8735816143, 9088628683, 7223875998, 2474943274, 3104949425, 3335871296, 203030608, 4489433214, 8571104246, 2596305840, 3074822352, 201124389, 1937, 1981724228, 3731169417, 205419201, 7422492329, 406436524, 1803380, 4241434815, 9406742928, 1359861204, 3012958642, 2260118449, 5003399811
+}
+
+local recentlyUsedIDs = {}
+local MAX_RECENT_IDS = 20
+
+local COLORS = {
+    PRIMARY = Color3.fromRGB(90, 120, 255),
+    SUCCESS = Color3.fromRGB(120, 200, 255),
+    ERROR = Color3.fromRGB(255, 90, 90),
+    WARNING = Color3.fromRGB(255, 180, 50),
+    BACKGROUND = Color3.fromRGB(18, 18, 24),
+    BACKGROUND_DARK = Color3.fromRGB(14, 14, 20),
+    ACCENT_GREEN = Color3.fromRGB(80, 255, 150),
+    ACCENT_BLUE = Color3.fromRGB(80, 200, 255),
+    ACCENT_ORANGE = Color3.fromRGB(255, 140, 0),
+    ACCENT_PURPLE = Color3.fromRGB(150, 120, 255),
+    BUTTON_NORMAL = Color3.fromRGB(30, 34, 48),
+    BUTTON_SUCCESS = Color3.fromRGB(0, 160, 60),
+    BUTTON_ERROR = Color3.fromRGB(160, 0, 0),
+    BUTTON_APPLY = Color3.fromRGB(90, 120, 255)
+}
+
+local function randomWait(min, max)
+    task.wait(min + math.random() * (max - min))
+end
+
+local TRANSITION_EFFECTS = {
+    WAVE = "wave"
+}
+
+local currentTransitionEffect = TRANSITION_EFFECTS.WAVE
+
+local ApplicationState = {
+    IDLE = "idle",
+    FETCHING = "fetching",
+    CLEANING = "cleaning",
+    APPLYING = "applying",
+    LOADING_ACCESSORIES = "loading_accessories",
+    COMPLETE = "complete",
+    ERROR = "error"
+}
+
+local currentState = ApplicationState.IDLE
+local stateStartTime = 0
+local STATE_TIMEOUT = 5
+local timeoutMonitor = nil
+local currentAppliedUserId = nil
+local lastApplicationTime = 0
+local lastRequestedUserId = nil
+
+local isApplyingAvatar = false
+local lastExternalChangeTime = 0
+local reapplyAttempts = 0
+local characterChangeMonitor = nil
+local ignoreNextChange = false
+local previewToggleDebounce = false
+
+local connections = {}
+local activeTweens = {}
+local pulseLoop = nil
+local statusAnimations = {}
+local toggleBtnPulseLoop = nil
+local statusAnimationTask = nil
+
+local statusMessages = {
+    ready = {text = "Ready", color = COLORS.SUCCESS, animate = false},
+    fetching = {text = "Fetching Avatar", color = COLORS.ACCENT_PURPLE, animate = true},
+    cleaning = {text = "Cleaning Character", color = COLORS.ACCENT_ORANGE, animate = true},
+    applying = {text = "Applying Avatar", color = COLORS.ACCENT_BLUE, animate = true},
+    accessories = {text = "Loading Accessories", color = COLORS.PRIMARY, animate = true},
+    success = {text = "Avatar Applied", color = COLORS.ACCENT_GREEN, animate = true},
+    no_target = {text = "No Target Entered", color = COLORS.ERROR, animate = true},
+    invalid = {text = "Invalid Target", color = COLORS.ERROR, animate = true},
+    already = {text = "Already Applied", color = COLORS.WARNING, animate = true},
+    wait = {text = "Please Wait", color = COLORS.WARNING, animate = true},
+    auto_active = {text = "Auto Apply Active", color = COLORS.ACCENT_GREEN, animate = false},
+    not_found = {text = "Target Not Found", color = COLORS.ERROR, animate = true},
+    fetch_failed = {text = "Failed To Fetch", color = COLORS.ERROR, animate = true},
+    no_humanoid = {text = "Humanoid Not Found", color = COLORS.ERROR, animate = true},
+    conflict_detected = {text = "Skin Change Detected", color = COLORS.WARNING, animate = true}
+}
+
+local faceCache = {}
+local lastFaceCheck = {}
+local descriptionCache = {}
+local lastFetchTime = {}
+
+local function trackConnection(conn)
+    table.insert(connections, conn)
+    return conn
+end
+
+local function tween(obj, props, time, style, dir)
+    time = time or ANIMATION_DURATION
+    style = style or Enum.EasingStyle.Quad
+    dir = dir or Enum.EasingDirection.Out
+    
+    local info = TweenInfo.new(time, style, dir)
+    local t = TweenService:Create(obj, info, props)
+    table.insert(activeTweens, t)
+    
+    local conn
+    conn = t.Completed:Connect(function()
+        for i, tw in ipairs(activeTweens) do
+            if tw == t then
+                table.remove(activeTweens, i)
+                break
+            end
+        end
+        if conn then
+            conn:Disconnect()
+        end
+    end)
+    
+    t:Play()
+    return t
+end
+
+local function createWaveEffect(character)
+    local rootPart = character:FindFirstChild("HumanoidRootPart")
+    if not rootPart then return end
+    
+    local parts = {}
+    for _, part in ipairs(character:GetDescendants()) do
+        if part:IsA("BasePart") and part ~= rootPart then
+            local distance = (part.Position - rootPart.Position).Magnitude
+            table.insert(parts, {
+                part = part,
+                originalTrans = part.Transparency,
+                distance = distance
+            })
+        elseif part:IsA("Decal") then
+            table.insert(parts, {
+                part = part,
+                originalTrans = part.Transparency,
+                distance = 0
+            })
+        end
+    end
+    
+    table.sort(parts, function(a, b) return a.distance < b.distance end)
+    
+    for i, data in ipairs(parts) do
+        task.spawn(function()
+            if data.part and data.part.Parent then
+                tween(data.part, {Transparency = 1}, 0.2 + math.random() * 0.1)
+            end
+        end)
+        randomWait(0.01, 0.02)
+    end
+    
+    task.wait(0.2)
+    
+    for i = #parts, 1, -1 do
+        local data = parts[i]
+        if data.part and data.part.Parent then
+            task.spawn(function()
+                local targetTrans = data.originalTrans
+                if data.part:IsA("BasePart") and data.part.Name == "HumanoidRootPart" then
+                    targetTrans = 1
+                end
+                tween(data.part, {Transparency = targetTrans}, 0.2 + math.random() * 0.1)
+            end)
+            randomWait(0.01, 0.02)
+        end
+    end
+    
+    task.wait(0.2)
+end
+
+local function playTransitionEffect(character, effectType)
+    if not character or not character:FindFirstChild("HumanoidRootPart") then
+        return
+    end
+    
+    effectType = effectType or currentTransitionEffect
+    
+    if effectType == TRANSITION_EFFECTS.WAVE then
+        createWaveEffect(character)
+    end
+end
+
+local function canStartApplication()
+    return currentState == ApplicationState.IDLE or 
+           currentState == ApplicationState.COMPLETE or
+           currentState == ApplicationState.ERROR
+end
+
+local function setState(newState)
+    if not settings or type(settings) ~= "table" then
+    return
+    end
+    
+    currentState = newState
+    stateStartTime = tick()
+    
+    if timeoutMonitor then
+        task.cancel(timeoutMonitor)
+        timeoutMonitor = nil
+    end
+    
+    local shouldMonitor = (settings.enabled or isApplyingAvatar) and 
+                         (newState == ApplicationState.IDLE or
+                          newState == ApplicationState.FETCHING or 
+                          newState == ApplicationState.CLEANING or 
+                          newState == ApplicationState.APPLYING or 
+                          newState == ApplicationState.LOADING_ACCESSORIES)
+    
+    if shouldMonitor then
+        timeoutMonitor = task.spawn(function()
+            task.wait(STATE_TIMEOUT)
+            
+            if currentState == newState and (tick() - stateStartTime) >= STATE_TIMEOUT then
+                warn("[Avatar Changer] State timeout detected! State:", newState)
+                warn("[Avatar Changer] Resetting avatar changer...")
+                
+                isApplyingAvatar = false
+                ignoreNextChange = false
+                currentAppliedUserId = nil
+                reapplyAttempts = 0
+                
+                setState(ApplicationState.IDLE)
+                
+                if settings.enabled then
+                    setStatus("wait", "Request Timed Out - Retrying...")
+                    task.wait(1.5)
+                    setStatus("auto_active")
+                else
+                    setStatus("wait", "Request Timed Out")
+                    task.wait(1.5)
+                    setStatus("ready")
+                end
+            end
+        end)
+    end
+end
+
+local function retryOperation(func, maxRetries, delay)
+    maxRetries = maxRetries or 3
+    delay = delay or 0.5
+    
+    for i = 1, maxRetries do
+        local success, result = pcall(func)
+        if success then 
+            return true, result 
+        end
+        if i < maxRetries then 
+            task.wait(delay) 
+        end
+    end
+    return false, nil
+end
+
+local function cleanExpiredCache()
+    local now = tick()
+    for id, time in pairs(lastFetchTime) do
+        if (now - time) > CACHE_EXPIRATION then
+            descriptionCache[id] = nil
+            lastFetchTime[id] = nil
+        end
+    end
+    
+    for charId, time in pairs(lastFaceCheck) do
+        if (now - time) > CACHE_EXPIRATION then
+            faceCache[charId] = nil
+            lastFaceCheck[charId] = nil
+        end
+    end
+end
+
+task.spawn(function()
+    while true do
+        task.wait(60)
+        cleanExpiredCache()
+    end
+end)
+
+local function cleanupConnections()
+    for _, conn in ipairs(connections) do
+        if conn and conn.Connected then 
+            conn:Disconnect()
+        end
+    end
+    connections = {}
+end
+
+local function cleanupTweens()
+    for _, tw in ipairs(activeTweens) do
+        if tw then
+            tw:Cancel()
+        end
+    end
+    activeTweens = {}
+end
+
+local function cleanupStatusAnimations()
+    for _, anim in ipairs(statusAnimations) do
+        if anim then 
+            anim:Cancel()
+        end
+    end
+    statusAnimations = {}
+    
+    if statusAnimationTask then
+        task.cancel(statusAnimationTask)
+        statusAnimationTask = nil
+    end
+end
+
+local function cleanupPulseLoop()
+    if pulseLoop then 
+        pulseLoop:Disconnect()
+        pulseLoop = nil
+    end
+end
+
+local function cleanupToggleBtnPulse()
+    if toggleBtnPulseLoop then
+        task.cancel(toggleBtnPulseLoop)
+        toggleBtnPulseLoop = nil
+    end
+end
+
+local function cleanupCharacterMonitor()
+    if characterChangeMonitor then
+        characterChangeMonitor:Disconnect()
+        characterChangeMonitor = nil
+    end
+end
+
+local function cleanupAll()
+    cleanupConnections()
+    cleanupTweens()
+    cleanupStatusAnimations()
+    cleanupPulseLoop()
+    cleanupToggleBtnPulse()
+    cleanupCharacterMonitor()
+   
+    if gui and gui.Parent then
+       gui:Destroy()
+    end
+    
+    if timeoutMonitor then
+        task.cancel(timeoutMonitor)
+        timeoutMonitor = nil
+    end
+end
+
+local function safeRead()
+    if not readfile then return nil end
+    
+    local success, data = pcall(function()
+        return readfile(filename)
+    end)
+    
+    if not success or not data or data == "" then 
+        return nil 
+    end
+    
+    local decodeSuccess, tbl = pcall(function()
+        return HttpService:JSONDecode(data)
+    end)
+    
+    if not decodeSuccess then
+        return nil
+    end
+    
+    return tbl
+end
+
+local function safeWrite(tbl)
+    if not writefile then return end
+    writefile(filename, HttpService:JSONEncode(tbl))
+end
+
+local function validateSettings(settings)
+    local defaults = {
+        target = "", 
+        enabled = false, 
+        uiSize = {x = 240, y = 180},
+        uiPos = {x = 1, offsetX = -280, y = 0, offsetY = 20},
+        minimized = false,
+        showPreview = false,
+        uiHidden = false,
+        toggleBtnPos = {x = 0.5, offsetX = -35, y = 0, offsetY = 100},
+        protectFromSkinChangers = true
+    }
+    
+    for key, defaultValue in pairs(defaults) do
+        if settings[key] == nil then
+            settings[key] = defaultValue
+        end
+    end
+    
+    if type(settings.uiSize) ~= "table" or not settings.uiSize.x or not settings.uiSize.y then
+        settings.uiSize = defaults.uiSize
+    end
+    if type(settings.uiPos) ~= "table" then
+        settings.uiPos = defaults.uiPos
+    end
+    if type(settings.toggleBtnPos) ~= "table" then
+        settings.toggleBtnPos = defaults.toggleBtnPos
+    end
+    
+    return settings
+end
+
+local settings = validateSettings(safeRead() or {})
+
+if settings.uiSize.y ~= 180 or settings.uiSize.x == 250 then
+    settings.uiSize.x = 240
+    settings.uiSize.y = 180
+    if settings.uiPos.offsetX == -250 then
+        settings.uiPos.offsetX = -280
+    end
+    safeWrite(settings)
+end
+
+local function trim(s) return (s:gsub("^%s*(.-)%s*$", "%1")) end
+local function isDigits(s) return tonumber(s) ~= nil end
+
+local function ResolveUserId(str)
+    if not str or str == "" then return nil end
+    str = trim(str)
+    if isDigits(str) then return tonumber(str) end
+    
+    local success, id = retryOperation(function() 
+        return Players:GetUserIdFromNameAsync(str) 
+    end, 2, 0.3)
+    
+    return success and id or nil
+end
+
+local function addButtonFeedback(button, originalColor)
+    trackConnection(button.MouseEnter:Connect(function()
+        tween(button, {BackgroundColor3 = originalColor:Lerp(Color3.new(1,1,1), 0.15)}, 0.15)
+    end))
+    
+    trackConnection(button.MouseLeave:Connect(function()
+        tween(button, {BackgroundColor3 = originalColor}, 0.15)
+    end))
+end
+
+local function clampPositionToBounds(frame)
+    local viewportSize = workspace.CurrentCamera.ViewportSize
+    local frameSize = frame.AbsoluteSize
+    
+    local posX = frame.Position.X.Scale * viewportSize.X + frame.Position.X.Offset
+    local posY = frame.Position.Y.Scale * viewportSize.Y + frame.Position.Y.Offset
+    
+    if posX < SCREEN_PADDING then
+        posX = SCREEN_PADDING
+    elseif posX + frameSize.X > viewportSize.X - SCREEN_PADDING then
+        posX = viewportSize.X - frameSize.X - SCREEN_PADDING
+    end
+    
+    if posY < SCREEN_PADDING then
+        posY = SCREEN_PADDING
+    elseif posY + frameSize.Y > viewportSize.Y - SCREEN_PADDING then
+        posY = viewportSize.Y - frameSize.Y - SCREEN_PADDING
+    end
+    
+    return UDim2.new(0, posX, 0, posY)
+end
+
+local function ensureUIInBounds(frame, animate)
+    local clampedPos = clampPositionToBounds(frame)
+    
+    if clampedPos ~= frame.Position then
+        if animate then
+            tween(frame, {Position = clampedPos}, ANIMATION_DURATION, Enum.EasingStyle.Back, Enum.EasingDirection.Out)
+        else
+            frame.Position = clampedPos
+        end
+        
+        settings.uiPos = {x = clampedPos.X.Scale, offsetX = clampedPos.X.Offset, y = clampedPos.Y.Scale, offsetY = clampedPos.Y.Offset}
+        safeWrite(settings)
+        return true
+    end
+    return false
+end
+
+local function getDescriptionWithCache(userId)
+    local now = tick()
+    
+    if descriptionCache[userId] and lastFetchTime[userId] then
+        if (now - lastFetchTime[userId]) < FETCH_COOLDOWN then
+            return descriptionCache[userId]
+        end
+    end
+    
+    local success, desc = retryOperation(function() 
+        return Players:GetHumanoidDescriptionFromUserId(userId) 
+    end, 3, 0.5)
+    
+    if success and desc then
+        descriptionCache[userId] = desc
+        lastFetchTime[userId] = now
+        
+        local cacheCount = 0
+        for _ in pairs(descriptionCache) do
+            cacheCount = cacheCount + 1
+        end
+        
+        if cacheCount > MAX_CACHE_SIZE then
+            local oldestId = nil
+            local oldestTime = math.huge
+            for id, time in pairs(lastFetchTime) do
+                if time < oldestTime then
+                    oldestTime = time
+                    oldestId = id
+                end
+            end
+            if oldestId then
+                descriptionCache[oldestId] = nil
+                lastFetchTime[oldestId] = nil
+            end
+        end
+        
+        return desc
+    end
+    
+    return nil
+end
+
+
+local function getCurrentFaceId(character)
+    local head = character:FindFirstChild("Head")
+    if not head then return nil end
+    
+    local face = head:FindFirstChild("face")
+    if not face or not face:IsA("Decal") then return nil end
+    
+    local texture = face.Texture
+    local faceId = texture:match("%d+")
+    return faceId and tonumber(faceId) or nil
+end
+
+local function needsFaceUpdate(character, targetFaceId)
+    if not targetFaceId or targetFaceId == "" then return false end
+    
+    local targetId = tonumber(targetFaceId)
+    if not targetId or targetId <= 0 then return false end
+    
+    local now = tick()
+    local characterId = tostring(character)
+    
+    if lastFaceCheck[characterId] and (now - lastFaceCheck[characterId]) < FACE_CHECK_COOLDOWN then
+        return faceCache[characterId] ~= targetId
+    end
+    
+    lastFaceCheck[characterId] = now
+    local currentId = getCurrentFaceId(character)
+    faceCache[characterId] = currentId
+    
+    return currentId ~= targetId
+end
+
+local function removeFaces(head)
+    for _, child in ipairs(head:GetChildren()) do
+        if child:IsA("Decal") and child.Name == "face" then
+            child:Destroy()
+        end
+    end
+end
+
+local function applyClothingAndFace(character, description, humanoid)
+    if not character then return end
+    for _, item in ipairs(character:GetChildren()) do
+        if item:IsA("Shirt") or item:IsA("Pants") or item:IsA("ShirtGraphic") then
+            item:Destroy()
+        end
+    end
+    task.wait(0.25)
+    if description.Shirt and description.Shirt ~= 0 then
+        local shirt = Instance.new("Shirt")
+        shirt.ShirtTemplate = "rbxassetid://" .. description.Shirt
+        shirt.Parent = character
+        task.spawn(function()
+            task.wait(0.4)
+            local temp = shirt.ShirtTemplate
+            shirt.ShirtTemplate = ""
+            task.wait()
+            shirt.ShirtTemplate = temp
+        end)
+    end
+    if description.Pants and description.Pants ~= 0 then
+        local pants = Instance.new("Pants")
+        pants.PantsTemplate = "rbxassetid://" .. description.Pants
+        pants.Parent = character
+        task.spawn(function()
+            task.wait(0.4)
+            local temp = pants.PantsTemplate
+            pants.PantsTemplate = ""
+            task.wait()
+            pants.PantsTemplate = temp
+        end)
+    end
+    
+    if description.GraphicTShirt and description.GraphicTShirt ~= 0 then
+        local tshirt = Instance.new("ShirtGraphic")
+        tshirt.Graphic = "rbxassetid://" .. description.GraphicTShirt
+        tshirt.Parent = character
+    end
+    applyFaceWithRetry(character, description.Face)
+end
+
+local gui = Instance.new("ScreenGui")
+gui.Name = "AcUI"
+gui.Parent = PlayerGui
+gui.IgnoreGuiInset = false
+gui.ResetOnSpawn = false
+gui.ZIndexBehavior = Enum.ZIndexBehavior.Global
+gui.DisplayOrder = 999999
+
+local Frame = Instance.new("Frame")
+Frame.Name = "MainFrame"
+Frame.Size = UDim2.new(0, settings.uiSize.x or 240, 0, settings.uiSize.y or 140)
+Frame.Position = UDim2.new(
+    settings.uiPos and settings.uiPos.x or 1, 
+    settings.uiPos and settings.uiPos.offsetX or -280, 
+    settings.uiPos and settings.uiPos.y or 0, 
+    settings.uiPos and settings.uiPos.offsetY or 20
+)
+Frame.BackgroundColor3 = COLORS.BACKGROUND
+Frame.BackgroundTransparency = 0
+Frame.BorderSizePixel = 0
+Frame.AnchorPoint = Vector2.new(0,0)
+Frame.Parent = gui
+local UICorner = Instance.new("UICorner", Frame)
+UICorner.CornerRadius = UDim.new(0, 15)
+local Shadow = Instance.new("UIStroke", Frame)
+Shadow.Thickness = 1.4
+Shadow.Transparency = 0.2
+local Glow = Instance.new("ImageLabel", Frame)
+Glow.Name = "Glow"
+Glow.Size = UDim2.new(1, 0, 1, 0)
+Glow.Position = UDim2.new(0,0,0,0)
+Glow.BackgroundTransparency = 1
+Glow.Image = "rbxassetid://4999023341"
+Glow.ImageTransparency = 0.3
+Glow.ZIndex = 0
+
+
+
+local PreviewPanel = Instance.new("Frame", gui)
+PreviewPanel.Name = "PreviewPanel"
+PreviewPanel.Size = UDim2.new(0, 180, 0, 340)
+PreviewPanel.Position = UDim2.new(0, 0, 0, 0)
+PreviewPanel.BackgroundColor3 = COLORS.BACKGROUND_DARK
+PreviewPanel.BackgroundTransparency = 0
+PreviewPanel.BorderSizePixel = 0
+PreviewPanel.Visible = false
+PreviewPanel.ZIndex = 2
+Instance.new("UICorner", PreviewPanel).CornerRadius = UDim.new(0, 15)
+
+local PreviewStroke = Instance.new("UIStroke", PreviewPanel)
+PreviewStroke.Thickness = 2.3
+PreviewStroke.Transparency = 0.5
+PreviewStroke.Color = Color3.fromRGB(0, 0, 0)
+PreviewStroke.ZIndex = 9999999
+
+local PreviewGlow = Instance.new("ImageLabel", PreviewPanel)
+PreviewGlow.Name = "Glow"
+PreviewGlow.Size = UDim2.new(1, 20, 1, 20)
+PreviewGlow.Position = UDim2.new(0.5, 0, 0.5, 0)
+PreviewGlow.AnchorPoint = Vector2.new(0.5, 0.5)
+PreviewGlow.BackgroundTransparency = 1
+PreviewGlow.Image = "rbxassetid://4999023005"
+PreviewGlow.ImageTransparency = 0.4
+PreviewGlow.ImageColor3 = COLORS.ERROR
+PreviewGlow.ZIndex = 5
+
+local ToggleVisibilityBtn = Instance.new("ImageButton")
+ToggleVisibilityBtn.Name = "ToggleVisibilityBtn"
+ToggleVisibilityBtn.Size = UDim2.new(0, BUTTON_DEFAULT_SIZE, 0, BUTTON_DEFAULT_SIZE)
+ToggleVisibilityBtn.Position = UDim2.new(
+    settings.toggleBtnPos and settings.toggleBtnPos.x or 0.5, 
+    settings.toggleBtnPos and settings.toggleBtnPos.offsetX or -35, 
+    settings.toggleBtnPos and settings.toggleBtnPos.y or 0, 
+    settings.toggleBtnPos and settings.toggleBtnPos.offsetY or 100
+)
+ToggleVisibilityBtn.AnchorPoint = Vector2.new(0.5, 0.5)
+ToggleVisibilityBtn.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
+ToggleVisibilityBtn.BackgroundTransparency = 0.1
+ToggleVisibilityBtn.BorderSizePixel = 0
+ToggleVisibilityBtn.Image = ""
+ToggleVisibilityBtn.ZIndex = 999999
+ToggleVisibilityBtn.Parent = gui
+
+Instance.new("UICorner", ToggleVisibilityBtn).CornerRadius = UDim.new(1, 0)
+
+local ToggleBtnStroke = Instance.new("UIStroke", ToggleVisibilityBtn)
+ToggleBtnStroke.Thickness = 2.5
+ToggleBtnStroke.Transparency = 0.3
+ToggleBtnStroke.Color = Color3.fromRGB(0, 0, 0)
+
+local ToggleBtnGlow = Instance.new("ImageLabel", ToggleVisibilityBtn)
+ToggleBtnGlow.Name = "Glow"
+ToggleBtnGlow.Size = UDim2.new(1.4, 0, 1.4, 0)
+ToggleBtnGlow.Position = UDim2.new(0.5, 0, 0.5, 0)
+ToggleBtnGlow.AnchorPoint = Vector2.new(0.5, 0.5)
+ToggleBtnGlow.BackgroundTransparency = 1
+ToggleBtnGlow.Image = "rbxassetid://4999023345"
+ToggleBtnGlow.ImageTransparency = 0.6
+ToggleBtnGlow.ImageColor3 = COLORS.PRIMARY
+ToggleBtnGlow.ZIndex = 999998
+
+local ToggleBtnIcon = Instance.new("TextLabel", ToggleVisibilityBtn)
+ToggleBtnIcon.Name = "Icon"
+ToggleBtnIcon.Size = UDim2.new(1, 0, 1, 0)
+ToggleBtnIcon.BackgroundTransparency = 1
+ToggleBtnIcon.Text = "🔓"
+ToggleBtnIcon.TextColor3 = Color3.fromRGB(255, 255, 255)
+ToggleBtnIcon.Font = Enum.Font.GothamBold
+ToggleBtnIcon.TextSize = 22
+ToggleBtnIcon.ZIndex = 1000000
+
+local ToggleBtnPulse = Instance.new("Frame", ToggleVisibilityBtn)
+ToggleBtnPulse.Name = "Pulse"
+ToggleBtnPulse.Size = UDim2.new(1, 0, 1, 0)
+ToggleBtnPulse.Position = UDim2.new(0.5, 0, 0.5, 0)
+ToggleBtnPulse.AnchorPoint = Vector2.new(0.5, 0.5)
+ToggleBtnPulse.BackgroundColor3 = Color3.fromRGB(15, 15, 15)
+ToggleBtnPulse.BackgroundTransparency = 0.7
+ToggleBtnPulse.BorderSizePixel = 0
+ToggleBtnPulse.ZIndex = 999997
+Instance.new("UICorner", ToggleBtnPulse).CornerRadius = UDim.new(1, 0)
+
+local function startToggleBtnPulse()
+    if toggleBtnPulseLoop then
+        task.cancel(toggleBtnPulseLoop)
+    end
+    
+    toggleBtnPulseLoop = task.spawn(function()
+        while ToggleVisibilityBtn and ToggleVisibilityBtn.Parent do
+            tween(ToggleBtnPulse, {Size = UDim2.new(1.3, 0, 1.3, 0), BackgroundTransparency = 1}, 1.5, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
+            task.wait(0.1)
+            ToggleBtnPulse.Size = UDim2.new(1, 0, 1, 0)
+            ToggleBtnPulse.BackgroundTransparency = 0.7
+            task.wait(0.75)
+        end
+    end)
+end
+
+startToggleBtnPulse()
+
+local toggleDragging, toggleDragStart, toggleStartPos, toggleDragConnection
+
+local function updateToggleDrag(input)
+    local delta = input.Position - toggleDragStart
+    local newPos = UDim2.new(toggleStartPos.X.Scale, toggleStartPos.X.Offset + delta.X, toggleStartPos.Y.Scale, toggleStartPos.Y.Offset + delta.Y)
+    
+    local viewportSize = workspace.CurrentCamera.ViewportSize
+    local btnSize = ToggleVisibilityBtn.AbsoluteSize
+    
+    local posX = newPos.X.Scale * viewportSize.X + newPos.X.Offset
+    local posY = newPos.Y.Scale * viewportSize.Y + newPos.Y.Offset
+    
+    posX = math.clamp(posX, btnSize.X/2 + SCREEN_PADDING, viewportSize.X - btnSize.X/2 - SCREEN_PADDING)
+    posY = math.clamp(posY, btnSize.Y/2 + SCREEN_PADDING, viewportSize.Y - btnSize.Y/2 - SCREEN_PADDING)
+    
+    ToggleVisibilityBtn.Position = UDim2.new(0, posX, 0, posY)
+end
+
+trackConnection(ToggleVisibilityBtn.InputBegan:Connect(function(input)
+    if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+        if not input.Position then return end
+        
+        toggleDragging = true
+        toggleDragStart = input.Position
+        toggleStartPos = ToggleVisibilityBtn.Position
+        
+        tween(ToggleVisibilityBtn, {Size = UDim2.new(0, BUTTON_HOVER_SIZE, 0, BUTTON_HOVER_SIZE)}, 0.15, Enum.EasingStyle.Back, Enum.EasingDirection.Out)
+        tween(ToggleBtnStroke, {Thickness = 3.5}, 0.15)
+        
+        if toggleDragConnection then 
+            toggleDragConnection:Disconnect()
+        end
+        toggleDragConnection = trackConnection(input.Changed:Connect(function()
+            if input.UserInputState == Enum.UserInputState.End then
+                toggleDragging = false
+                tween(ToggleVisibilityBtn, {Size = UDim2.new(0, BUTTON_DEFAULT_SIZE, 0, BUTTON_DEFAULT_SIZE)}, 0.2, Enum.EasingStyle.Back, Enum.EasingDirection.Out)
+                tween(ToggleBtnStroke, {Thickness = 2.5}, 0.2)
+                
+                local pos = ToggleVisibilityBtn.Position
+                settings.toggleBtnPos = {x = pos.X.Scale, offsetX = pos.X.Offset, y = pos.Y.Scale, offsetY = pos.Y.Offset}
+                safeWrite(settings)
+            end
+        end))
+    end
+end))
+
+local dragging, dragStart, startPos, dragConnection
+
+local function updateDrag(input)
+    local delta = input.Position - dragStart
+    local newPos = UDim2.new(startPos.X.Scale, startPos.X.Offset + delta.X, startPos.Y.Scale, startPos.Y.Offset + delta.Y)
+    
+    local viewportSize = workspace.CurrentCamera.ViewportSize
+    local frameSize = Frame.AbsoluteSize
+    
+    local posX = newPos.X.Scale * viewportSize.X + newPos.X.Offset
+    local posY = newPos.Y.Scale * viewportSize.Y + newPos.Y.Offset
+    
+    if posX < SCREEN_PADDING then
+        posX = SCREEN_PADDING
+    elseif posX + frameSize.X > viewportSize.X - SCREEN_PADDING then
+        posX = viewportSize.X - frameSize.X - SCREEN_PADDING
+    end
+    
+    if posY < SCREEN_PADDING then
+        posY = SCREEN_PADDING
+    elseif posY + frameSize.Y > viewportSize.Y - SCREEN_PADDING then
+        posY = viewportSize.Y - frameSize.Y - SCREEN_PADDING
+    end
+    
+    newPos = UDim2.new(0, posX, 0, posY)
+    Frame.Position = newPos
+end
+
+trackConnection(UserInputService.InputChanged:Connect(function(input)
+    if toggleDragging and (input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch) then
+        updateToggleDrag(input)
+    elseif dragging and (input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch) then
+        updateDrag(input)
+    end
+end))
+
+local TitleBar = Instance.new("Frame", Frame)
+TitleBar.Name = "TitleBar"
+TitleBar.Size = UDim2.new(1, 0, 0, 30)
+TitleBar.Position = UDim2.new(0,0,0,0)
+TitleBar.BackgroundTransparency = 1
+
+local TitleLabel = Instance.new("TextLabel", TitleBar)
+TitleLabel.Size = UDim2.new(1, -60, 1, 0)
+TitleLabel.Position = UDim2.new(0, 10, 0, 0)
+TitleLabel.BackgroundTransparency = 1
+TitleLabel.Text = "Avatar Changer"
+TitleLabel.TextColor3 = Color3.fromRGB(255,255,255)
+TitleLabel.Font = Enum.Font.GothamBold
+TitleLabel.TextSize = 16
+TitleLabel.TextXAlignment = Enum.TextXAlignment.Left
+
+local Mini = Instance.new("TextButton", TitleBar)
+Mini.Name = "Minimize"
+Mini.Size = UDim2.new(0, 28, 0, 22)
+Mini.Position = UDim2.new(1, -36, 0, 4)
+Mini.BackgroundColor3 = COLORS.BUTTON_NORMAL
+Mini.BackgroundTransparency = 0.3
+Mini.Text = "-"
+Mini.TextColor3 = Color3.fromRGB(255,255,255)
+Mini.Font = Enum.Font.GothamBold
+Mini.TextSize = 18
+Mini.ZIndex = 10
+Instance.new("UICorner", Mini).CornerRadius = UDim.new(0, 6)
+
+local ToggleBtn = Instance.new("TextButton", TitleBar)
+ToggleBtn.Name = "ToggleBtn"
+ToggleBtn.Size = UDim2.new(0, 44, 0, 22)
+ToggleBtn.Position = UDim2.new(1, -86, 0, 4)
+ToggleBtn.BackgroundTransparency = 0.15
+ToggleBtn.TextColor3 = Color3.fromRGB(255,255,255)
+ToggleBtn.Font = Enum.Font.GothamBlack
+ToggleBtn.TextSize = 13
+ToggleBtn.ZIndex = 10
+Instance.new("UICorner", ToggleBtn)
+
+local Input = Instance.new("TextBox", Frame)
+Input.Name = "TargetInput"
+Input.Size = UDim2.new(1, -20, 0, 30)
+Input.Position = UDim2.new(0, 10, 0, 40)
+Input.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
+Input.BackgroundTransparency = 0.25
+Input.TextColor3 = Color3.fromRGB(255,255,255)
+Input.PlaceholderText = "Target Username or ID"
+Input.Text = settings.target or ""
+Input.Font = Enum.Font.Gotham
+Input.TextSize = 15
+local inputStroke = Instance.new("UIStroke", Input)
+inputStroke.Thickness = 1
+inputStroke.Transparency = 0.4
+inputStroke.Color = Color3.fromRGB(25, 25, 25)
+Instance.new("UICorner", Input)
+
+local ApplyBtn = Instance.new("TextButton", Frame)
+ApplyBtn.Name = "ApplyBtn"
+ApplyBtn.Size = UDim2.new(0.5, -15, 0, 32)
+ApplyBtn.Position = UDim2.new(0, 10, 0, 80)
+ApplyBtn.Text = "Apply Once"
+ApplyBtn.BackgroundColor3 = COLORS.PRIMARY
+ApplyBtn.TextColor3 = Color3.fromRGB(255,255,255)
+ApplyBtn.Font = Enum.Font.GothamBlack
+ApplyBtn.TextSize = 14
+Instance.new("UICorner", ApplyBtn)
+
+local PersistToggle = Instance.new("TextButton", Frame)
+PersistToggle.Name = "PersistToggle"
+PersistToggle.Size = UDim2.new(0.5, -15, 0, 32)
+PersistToggle.Position = UDim2.new(0.5, 5, 0, 80)
+PersistToggle.TextColor3 = Color3.fromRGB(255,255,255)
+PersistToggle.Font = Enum.Font.GothamBlack
+PersistToggle.TextSize = 14
+Instance.new("UICorner", PersistToggle)
+
+local StatusContainer = Instance.new("Frame", Frame)
+StatusContainer.Name = "StatusContainer"
+StatusContainer.Size = UDim2.new(1, -20, 0, 28)
+StatusContainer.Position = UDim2.new(0, 10, 1, -27)
+StatusContainer.BackgroundTransparency = 1
+StatusContainer.BorderSizePixel = 0
+
+local RandomBtn = Instance.new("TextButton", Frame)
+RandomBtn.Name = "RandomBtn"
+RandomBtn.Size = UDim2.new(1, -20, 0, 32)
+RandomBtn.Position = UDim2.new(0, 10, 0, 122)
+RandomBtn.Text = "Random 🔄"
+RandomBtn.BackgroundColor3 = COLORS.ACCENT_PURPLE
+RandomBtn.TextColor3 = Color3.fromRGB(255,255,255)
+RandomBtn.Font = Enum.Font.GothamBlack
+RandomBtn.TextSize = 14
+Instance.new("UICorner", RandomBtn)
+
+local StatusDot = Instance.new("Frame", StatusContainer)
+StatusDot.Name = "StatusDot"
+StatusDot.Size = UDim2.new(0, 5, 0, 5)
+StatusDot.Position = UDim2.new(0, 10, 0.5, -5)
+StatusDot.BackgroundColor3 = COLORS.PRIMARY
+StatusDot.BorderSizePixel = 0
+Instance.new("UICorner", StatusDot).CornerRadius = UDim.new(1, 0)
+
+local DotGlow = Instance.new("ImageLabel", StatusDot)
+DotGlow.Name = "Glow"
+DotGlow.Size = UDim2.new(2, 0, 2, 0)
+DotGlow.Position = UDim2.new(0.5, 0, 0.5, 0)
+DotGlow.AnchorPoint = Vector2.new(0.5, 0.5)
+DotGlow.BackgroundTransparency = 1
+DotGlow.Image = "rbxassetid://4999023345"
+DotGlow.ImageTransparency = 0.4
+DotGlow.ImageColor3 = COLORS.PRIMARY
+DotGlow.ZIndex = 0
+
+local Status = Instance.new("TextLabel", StatusContainer)
+Status.Name = "Status"
+Status.Size = UDim2.new(1, -32, 1, 0)
+Status.Position = UDim2.new(0, 30, 0, -1)
+Status.BackgroundTransparency = 1
+Status.Text = "Ready"
+Status.TextColor3 = Color3.fromRGB(220,220,230)
+Status.Font = Enum.Font.GothamMedium
+Status.TextSize = 13
+Status.TextXAlignment = Enum.TextXAlignment.Left
+Status.TextYAlignment = Enum.TextYAlignment.Center
+
+local function fadeStatus(alpha)
+    tween(Status, {TextTransparency = alpha}, 0.25)
+    tween(DotGlow, {ImageTransparency = alpha + 0.3}, 0.25)
+end
+
+local PreviewHeader = Instance.new("Frame", PreviewPanel)
+PreviewHeader.Size = UDim2.new(1, 0, 0, 35)
+PreviewHeader.Position = UDim2.new(0, 0, 0, 0)
+PreviewHeader.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
+PreviewHeader.BackgroundTransparency = 0.4
+PreviewHeader.BorderSizePixel = 0
+PreviewHeader.ZIndex = 3
+Instance.new("UICorner", PreviewHeader).CornerRadius = UDim.new(0, 12)
+
+local PreviewIcon = Instance.new("TextLabel", PreviewHeader)
+PreviewIcon.Size = UDim2.new(0, 20, 0, 20)
+PreviewIcon.Position = UDim2.new(0, 8, 0.5, -10)
+PreviewIcon.BackgroundTransparency = 1
+PreviewIcon.Text = "🎭"
+PreviewIcon.TextColor3 = Color3.fromRGB(150, 180, 255)
+PreviewIcon.Font = Enum.Font.Gotham
+PreviewIcon.TextSize = 14
+PreviewIcon.ZIndex = 4
+
+local PreviewTitle = Instance.new("TextLabel", PreviewHeader)
+PreviewTitle.Size = UDim2.new(1, -35, 1, 0)
+PreviewTitle.Position = UDim2.new(0, 32, 0, 0)
+PreviewTitle.BackgroundTransparency = 1
+PreviewTitle.Text = "PREVIEW OF AVATAR"
+PreviewTitle.TextColor3 = Color3.fromRGB(220, 230, 255)
+PreviewTitle.Font = Enum.Font.GothamBold
+PreviewTitle.TextSize = 12
+PreviewTitle.TextXAlignment = Enum.TextXAlignment.Left
+PreviewTitle.ZIndex = 4
+
+local PreviewDivider = Instance.new("Frame", PreviewPanel)
+PreviewDivider.Size = UDim2.new(1, -20, 0, 1)
+PreviewDivider.Position = UDim2.new(0, 10, 0, 38)
+PreviewDivider.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
+PreviewDivider.BorderSizePixel = 0
+PreviewDivider.ZIndex = 3
+
+local ViewportContainer = Instance.new("Frame", PreviewPanel)
+ViewportContainer.Size = UDim2.new(1, -20, 0, 200)
+ViewportContainer.Position = UDim2.new(0, 10, 0, 45)
+ViewportContainer.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
+ViewportContainer.BackgroundTransparency = 0.5
+ViewportContainer.BorderSizePixel = 0
+ViewportContainer.ZIndex = 3
+Instance.new("UICorner", ViewportContainer).CornerRadius = UDim.new(0, 10)
+
+local ViewportStroke = Instance.new("UIStroke", ViewportContainer)
+ViewportStroke.Thickness = 1.6
+ViewportStroke.Transparency = 0.4
+ViewportStroke.Color = Color3.fromRGB(0, 0, 0)
+
+local ViewportFrame = Instance.new("ViewportFrame", ViewportContainer)
+ViewportFrame.Size = UDim2.new(1, -6, 1, -6)
+ViewportFrame.Position = UDim2.new(0, 3, 0, 3)
+ViewportFrame.BackgroundTransparency = 1
+ViewportFrame.ZIndex = 4
+ViewportFrame.Ambient = Color3.fromRGB(180, 180, 180)
+ViewportFrame.LightColor = Color3.fromRGB(255, 255, 255)
+ViewportFrame.LightDirection = Vector3.new(0, -1, -0.5)
+Instance.new("UICorner", ViewportFrame).CornerRadius = UDim.new(0, 8)
+
+local LoadingLabel = Instance.new("TextLabel", ViewportContainer)
+LoadingLabel.Size = UDim2.new(1, 0, 1, 0)
+LoadingLabel.BackgroundTransparency = 1
+LoadingLabel.Text = "No Preview"
+LoadingLabel.TextColor3 = Color3.fromRGB(150, 160, 180)
+LoadingLabel.Font = Enum.Font.GothamMedium
+LoadingLabel.TextSize = 12
+LoadingLabel.ZIndex = 5
+
+local RotationControls = Instance.new("Frame", ViewportContainer)
+RotationControls.Size = UDim2.new(1, 0, 0, 30)
+RotationControls.Position = UDim2.new(0, 0, 1, -30)
+RotationControls.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
+RotationControls.BorderSizePixel = 0
+RotationControls.ZIndex = 5
+Instance.new("UICorner", RotationControls).CornerRadius = UDim.new(0, 8)
+
+local RotateLeftBtn = Instance.new("TextButton", RotationControls)
+RotateLeftBtn.Size = UDim2.new(0, 35, 0, 22)
+RotateLeftBtn.Position = UDim2.new(0, 8, 0.5, -11)
+RotateLeftBtn.BackgroundColor3 = COLORS.BUTTON_NORMAL
+RotateLeftBtn.BackgroundTransparency = 0.2
+RotateLeftBtn.Text = "◀"
+RotateLeftBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+RotateLeftBtn.Font = Enum.Font.GothamBold
+RotateLeftBtn.TextSize = 14
+RotateLeftBtn.ZIndex = 6
+Instance.new("UICorner", RotateLeftBtn).CornerRadius = UDim.new(0, 6)
+
+local ResetRotationBtn = Instance.new("TextButton", RotationControls)
+ResetRotationBtn.Size = UDim2.new(0, 60, 0, 22)
+ResetRotationBtn.Position = UDim2.new(0.5, -30, 0.5, -11)
+ResetRotationBtn.BackgroundColor3 = COLORS.BUTTON_NORMAL
+ResetRotationBtn.BackgroundTransparency = 0.2
+ResetRotationBtn.Text = "Reset"
+ResetRotationBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+ResetRotationBtn.Font = Enum.Font.GothamBold
+ResetRotationBtn.TextSize = 11
+ResetRotationBtn.ZIndex = 6
+Instance.new("UICorner", ResetRotationBtn).CornerRadius = UDim.new(0, 6)
+
+local RotateRightBtn = Instance.new("TextButton", RotationControls)
+RotateRightBtn.Size = UDim2.new(0, 35, 0, 22)
+RotateRightBtn.Position = UDim2.new(1, -43, 0.5, -11)
+RotateRightBtn.BackgroundColor3 = COLORS.BUTTON_NORMAL
+RotateRightBtn.BackgroundTransparency = 0.2
+RotateRightBtn.Text = "▶"
+RotateRightBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+RotateRightBtn.Font = Enum.Font.GothamBold
+RotateRightBtn.TextSize = 14
+RotateRightBtn.ZIndex = 6
+Instance.new("UICorner", RotateRightBtn).CornerRadius = UDim.new(0, 6)
+
+local UserInfoContainer = Instance.new("Frame", PreviewPanel)
+UserInfoContainer.Size = UDim2.new(1, -20, 0, 70)
+UserInfoContainer.Position = UDim2.new(0, 10, 0, 255)
+UserInfoContainer.BackgroundTransparency = 1
+UserInfoContainer.ZIndex = 3
+
+local UsernameLabel = Instance.new("TextLabel", UserInfoContainer)
+UsernameLabel.Size = UDim2.new(1, 0, 0, 18)
+UsernameLabel.Position = UDim2.new(0, 0, 0, 0)
+UsernameLabel.BackgroundTransparency = 1
+UsernameLabel.Text = "Username: ---"
+UsernameLabel.TextColor3 = Color3.fromRGB(240, 245, 255)
+UsernameLabel.Font = Enum.Font.GothamBold
+UsernameLabel.TextSize = 12
+UsernameLabel.TextXAlignment = Enum.TextXAlignment.Left
+UsernameLabel.TextTruncate = Enum.TextTruncate.AtEnd
+UsernameLabel.ZIndex = 4
+UsernameLabel.RichText = true
+
+local UserIdLabel = Instance.new("TextLabel", UserInfoContainer)
+UserIdLabel.Size = UDim2.new(1, 0, 0, 16)
+UserIdLabel.Position = UDim2.new(0, 0, 0, 20)
+UserIdLabel.BackgroundTransparency = 1
+UserIdLabel.Text = "User ID: ---"
+UserIdLabel.TextColor3 = Color3.fromRGB(180, 190, 210)
+UserIdLabel.Font = Enum.Font.Gotham
+UserIdLabel.TextSize = 10
+UserIdLabel.TextXAlignment = Enum.TextXAlignment.Left
+UserIdLabel.ZIndex = 4
+UserIdLabel.RichText = true
+
+local StatusLabel = Instance.new("TextLabel", UserInfoContainer)
+StatusLabel.Size = UDim2.new(1, 0, 0, 16)
+StatusLabel.Position = UDim2.new(0, 0, 0, 40)
+StatusLabel.BackgroundTransparency = 1
+StatusLabel.Text = "Ready To Apply"
+StatusLabel.TextColor3 = COLORS.ACCENT_GREEN
+StatusLabel.Font = Enum.Font.GothamBold
+StatusLabel.TextSize = 10
+StatusLabel.TextXAlignment = Enum.TextXAlignment.Left
+StatusLabel.ZIndex = 4
+
+local DragHint = Instance.new("TextLabel", UserInfoContainer)
+DragHint.Size = UDim2.new(1, 0, 0, 14)
+DragHint.Position = UDim2.new(0, 0, 1, -14)
+DragHint.BackgroundTransparency = 1
+DragHint.Text = "🖱 Drag to Rotate"
+DragHint.TextColor3 = Color3.fromRGB(140, 150, 170)
+DragHint.Font = Enum.Font.GothamMedium
+DragHint.TextSize = 10
+DragHint.TextXAlignment = Enum.TextXAlignment.Center
+DragHint.ZIndex = 4
+
+local PreviewToggle = Instance.new("TextButton", TitleBar)
+PreviewToggle.Name = "PreviewToggle"
+PreviewToggle.Size = UDim2.new(0, 22, 0, 22)
+PreviewToggle.Position = UDim2.new(1, -114, 0, 4)
+PreviewToggle.BackgroundColor3 = Color3.fromRGB(99, 99, 99)
+PreviewToggle.BackgroundTransparency = 0.25
+PreviewToggle.Text = "👁"
+PreviewToggle.TextColor3 = Color3.fromRGB(255,255,255)
+PreviewToggle.Font = Enum.Font.GothamBold
+PreviewToggle.TextSize = 12
+PreviewToggle.ZIndex = 10
+Instance.new("UICorner", PreviewToggle).CornerRadius = UDim.new(0, 6)
+
+local previewVersion = 0
+local currentPreviewThread = nil
+local currentModel = nil
+local currentCamera = nil
+local currentRotation = -180
+local isDraggingRotation = false
+local lastDragPos = nil
+local rotationConnection = nil
+local previewWorldModel = currentAppliedUserId
+
+local function cleanup3DPreview()
+    if currentModel then
+        currentModel:Destroy()
+        currentModel = nil
+    end
+    if currentCamera then
+        currentCamera:Destroy()
+        currentCamera = nil
+    end
+    if previewWorldModel then
+        previewWorldModel:Destroy()
+        previewWorldModel = nil
+    end
+    if rotationConnection then
+        rotationConnection:Disconnect()
+        rotationConnection = nil
+    end
+    currentRotation = -180
+    isDraggingRotation = false
+    lastDragPos = nil
+end
+
+local function updateCameraPosition()
+    if not currentCamera or not currentModel then return end
+    
+    local primaryPart = currentModel.PrimaryPart or currentModel:FindFirstChild("HumanoidRootPart")
+    if not primaryPart then return end
+    
+    local modelCFrame = primaryPart.CFrame
+    local distance = 7
+    local angleRad = math.rad(currentRotation)
+    
+    local offsetX = math.sin(angleRad) * distance
+    local offsetZ = math.cos(angleRad) * distance
+    
+    currentCamera.CFrame = CFrame.new(
+        modelCFrame.Position + Vector3.new(offsetX, 1.2, offsetZ),
+        modelCFrame.Position + Vector3.new(0, 0.5, 0)
+    )
+    
+    currentCamera.FieldOfView = 70
+end
+
+local function fadeInPreviewElement(element, targetTransparency, delay)
+    delay = delay or 0
+    task.wait(delay)
+    
+    if element:IsA("TextLabel") or element:IsA("TextButton") then
+        element.TextTransparency = 1
+        tween(element, {TextTransparency = targetTransparency or 0}, PREVIEW_FADE_DURATION, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
+    elseif element:IsA("Frame") then
+        element.BackgroundTransparency = 1
+        tween(element, {BackgroundTransparency = targetTransparency or 0.3}, PREVIEW_FADE_DURATION, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
+    elseif element:IsA("ImageLabel") then
+        element.ImageTransparency = 1
+        tween(element, {ImageTransparency = targetTransparency or 0.6}, PREVIEW_FADE_DURATION, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
+    elseif element:IsA("UIStroke") then
+        element.Transparency = 1
+        tween(element, {Transparency = targetTransparency or 0.6}, PREVIEW_FADE_DURATION, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
+    end
+end
+
+local function fadeOutPreviewElement(element, delay)
+    delay = delay or 0
+    task.wait(delay)
+    
+    if element:IsA("TextLabel") or element:IsA("TextButton") then
+        tween(element, {TextTransparency = 1}, PREVIEW_FADE_DURATION, Enum.EasingStyle.Quad, Enum.EasingDirection.In)
+    elseif element:IsA("Frame") then
+        tween(element, {BackgroundTransparency = 1}, PREVIEW_FADE_DURATION, Enum.EasingStyle.Quad, Enum.EasingDirection.In)
+    elseif element:IsA("ImageLabel") then
+        tween(element, {ImageTransparency = 1}, PREVIEW_FADE_DURATION, Enum.EasingStyle.Quad, Enum.EasingDirection.In)
+    elseif element:IsA("UIStroke") then
+        tween(element, {Transparency = 1}, PREVIEW_FADE_DURATION, Enum.EasingStyle.Quad, Enum.EasingDirection.In)
+    end
+end
+
+local function create3DPreview(userId)
+    cleanup3DPreview()
+    
+    if not PreviewPanel.Visible then return end
+    
+    LoadingLabel.TextTransparency = 1
+    LoadingLabel.Text = "Loading 3D"
+    LoadingLabel.Visible = true
+    tween(LoadingLabel, {TextTransparency = 0}, 0.3)
+    
+    task.spawn(function()
+        local character = Players:CreateHumanoidModelFromUserId(userId)
+        
+        if not character then
+            LoadingLabel.Text = "3D Load Failed"
+            task.wait(0.5)
+            tween(LoadingLabel, {TextTransparency = 1}, 0.3)
+            task.wait(0.1)
+            LoadingLabel.Text = "No Preview"
+            LoadingLabel.TextTransparency = 0
+            return
+        end
+        
+        if not PreviewPanel.Visible then
+            character:Destroy()
+            return
+        end
+        
+        previewWorldModel = Instance.new("WorldModel")
+        previewWorldModel.Parent = ViewportFrame
+        
+        currentModel = character
+        currentModel.Parent = previewWorldModel
+        
+        local humanoid = currentModel:FindFirstChildOfClass("Humanoid")
+        if humanoid then
+            humanoid.DisplayDistanceType = Enum.HumanoidDisplayDistanceType.None
+        end
+        
+        local rootPart = currentModel:FindFirstChild("HumanoidRootPart")
+        if rootPart then
+            rootPart.Anchored = true
+            currentModel.PrimaryPart = rootPart
+            rootPart.CFrame = CFrame.new(0, 0, 0)
+        end
+        
+task.spawn(function()
+    task.wait(0.25)
+            for _, obj in ipairs(currentModel:GetChildren()) do
+                if obj:IsA("Shirt") and obj.ShirtTemplate then
+                    local url = obj.ShirtTemplate
+                    obj.ShirtTemplate = ""
+                    task.wait(0.25)
+                    obj.ShirtTemplate = url
+            elseif obj:IsA("Pants") and obj.PantsTemplate then
+            local url = obj.PantsTemplate
+            obj.PantsTemplate = ""
+            task.wait(0.1)
+            obj.PantsTemplate = url
+                elseif obj:IsA("ShirtGraphic") and obj.Graphic then
+                    local url = obj.Graphic
+                    obj.Graphic = ""
+                    task.wait(0.25)
+                    obj.Graphic = url
+                end
+            end
+        end)
+        task.wait(0.05)
+        currentCamera = Instance.new("Camera")
+        currentCamera.Parent = ViewportFrame
+        ViewportFrame.CurrentCamera = currentCamera
+        
+        currentRotation = -180
+        updateCameraPosition()
+        
+        tween(LoadingLabel, {TextTransparency = 1}, 0.3)
+        task.wait(0.1)
+        LoadingLabel.Visible = false
+        
+        rotationConnection = trackConnection(ViewportFrame.InputBegan:Connect(function(input)
+            if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+                isDraggingRotation = true
+                lastDragPos = input.Position
+            end
+        end))
+        
+        trackConnection(ViewportFrame.InputEnded:Connect(function(input)
+            if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+                isDraggingRotation = false
+                lastDragPos = nil
+            end
+        end))
+        
+        trackConnection(ViewportFrame.InputChanged:Connect(function(input)
+            if isDraggingRotation and lastDragPos and (input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch) then
+                local delta = input.Position.X - lastDragPos.X
+                currentRotation = currentRotation + delta * 0.5
+                updateCameraPosition()
+                lastDragPos = input.Position
+            end
+        end))
+    end)
+end
+
+trackConnection(RotateLeftBtn.MouseButton1Click:Connect(function()
+    currentRotation = currentRotation - 30
+    updateCameraPosition()
+    tween(RotateLeftBtn, {TextSize = 16}, 0.1)
+    task.wait(0.1)
+    tween(RotateLeftBtn, {TextSize = 14}, 0.1)
+end))
+
+trackConnection(RotateRightBtn.MouseButton1Click:Connect(function()
+    currentRotation = currentRotation + 30
+    updateCameraPosition()
+    tween(RotateRightBtn, {TextSize = 16}, 0.1)
+    task.wait(0.1)
+    tween(RotateRightBtn, {TextSize = 14}, 0.1)
+end))
+
+trackConnection(ResetRotationBtn.MouseButton1Click:Connect(function()
+    currentRotation = -180
+    updateCameraPosition()
+    tween(ResetRotationBtn, {TextSize = 12}, 0.1)
+    task.wait(0.1)
+    tween(ResetRotationBtn, {TextSize = 11}, 0.1)
+end))
+
+addButtonFeedback(RotateLeftBtn, COLORS.BUTTON_NORMAL)
+addButtonFeedback(RotateRightBtn, COLORS.BUTTON_NORMAL)
+addButtonFeedback(ResetRotationBtn, COLORS.BUTTON_NORMAL)
+
+local rainbowLoop = nil
+
+local function startRainbowAnimation()
+    if rainbowLoop then
+        task.cancel(rainbowLoop)
+    end
+    
+    rainbowLoop = task.spawn(function()
+        local hue = 0
+        while RandomBtn and RandomBtn.Parent do
+            hue = (hue + 0.5) % 360
+            
+            local r = math.floor(math.sin(math.rad(hue)) * 127 + 128)
+            local g = math.floor(math.sin(math.rad(hue + 120)) * 127 + 128)
+            local b = math.floor(math.sin(math.rad(hue + 240)) * 127 + 128)
+            
+            RandomBtn.BackgroundColor3 = Color3.fromRGB(r, g, b)
+            
+            task.wait(0.04)
+        end
+    end)
+end
+
+startRainbowAnimation()
+
+local function setStatus(statusKey, customText)
+    local statusData = statusMessages[statusKey]
+       fadeStatus(1)
+       task.wait(0.2)
+       fadeStatus(0)
+    if not statusData then
+        warn("Invalid status key: " .. tostring(statusKey))
+        return
+    end
+    
+    local text = customText or statusData.text
+    local color = statusData.color
+    local animate = statusData.animate
+    
+    Status.Text = text
+    StatusDot.BackgroundColor3 = color
+    DotGlow.ImageColor3 = color
+    
+    cleanupStatusAnimations()
+    cleanupPulseLoop()
+    
+    if animate then
+        local pulseIn = tween(StatusDot, {Size = UDim2.new(0, 12, 0, 12), Position = UDim2.new(0, 8, 0.5, -7)}, 0.25, Enum.EasingStyle.Back, Enum.EasingDirection.Out)
+        table.insert(statusAnimations, pulseIn)
+        statusAnimationTask = task.spawn(function()
+            task.wait(0.4)
+            local pulseOut = tween(StatusDot, {Size = UDim2.new(0, 10, 0, 10), Position = UDim2.new(0, 10, 0.5, -5)}, 0.2, Enum.EasingStyle.Quad, Enum.EasingDirection.InOut)
+            table.insert(statusAnimations, pulseOut)
+            task.wait(0.4)
+            
+            local elapsed = 0
+            pulseLoop = trackConnection(RunService.RenderStepped:Connect(function(dt)
+                elapsed = elapsed + dt
+                local scale = 1 + math.sin(elapsed * 3) * 0.15
+                StatusDot.Size = UDim2.new(0, 10 * scale, 0, 10 * scale)
+                StatusDot.Position = UDim2.new(0, 10 + (5 - 5 * scale), 0.5, -5 * scale)
+                DotGlow.ImageTransparency = 0.3 + math.sin(elapsed * 3) * 0.2
+            end))
+        end)
+    else
+        StatusDot.Size = UDim2.new(0, 10, 0, 10)
+        StatusDot.Position = UDim2.new(0, 10, 0.5, -5)
+        DotGlow.ImageTransparency = 0.4
+    end
+end
+
+local function updatePreviewPosition()
+    local framePos = Frame.Position
+    local frameSize = Frame.AbsoluteSize
+    local previewSize = PreviewPanel.AbsoluteSize
+    local viewportSize = workspace.CurrentCamera.ViewportSize
+    
+    local framePosX = framePos.X.Scale * viewportSize.X + framePos.X.Offset
+    local framePosY = framePos.Y.Scale * viewportSize.Y + framePos.Y.Offset
+    
+    local rightSpace = viewportSize.X - (framePosX + frameSize.X)
+    local leftSpace = framePosX
+    
+    local newPosX, newPosY
+    
+    if rightSpace >= previewSize.X + 15 + SCREEN_PADDING then
+        newPosX = framePosX + frameSize.X + 15
+    elseif leftSpace >= previewSize.X + 15 + SCREEN_PADDING then
+        newPosX = framePosX - previewSize.X - 15
+    else
+        newPosX = framePosX + frameSize.X + 15
+    end
+    
+    newPosY = framePosY
+    
+    if newPosX < SCREEN_PADDING then
+        newPosX = SCREEN_PADDING
+    elseif newPosX + previewSize.X > viewportSize.X - SCREEN_PADDING then
+        newPosX = viewportSize.X - previewSize.X - SCREEN_PADDING
+    end
+    
+    if newPosY < SCREEN_PADDING then
+        newPosY = SCREEN_PADDING
+    elseif newPosY + previewSize.Y > viewportSize.Y - SCREEN_PADDING then
+        newPosY = viewportSize.Y - previewSize.Y - SCREEN_PADDING
+    end
+    
+    local targetPos = UDim2.new(0, newPosX, 0, newPosY)
+    tween(PreviewPanel, {Position = targetPos}, ANIMATION_DURATION, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
+end
+
+local function loadPreview(targetText)
+    previewVersion += 1
+    local myVersion = previewVersion
+    if currentPreviewThread then
+        task.cancel(currentPreviewThread)
+        currentPreviewThread = nil
+    end
+    
+    cleanup3DPreview()
+    
+    if not PreviewPanel.Visible then
+        return
+    end
+    
+    LoadingLabel.TextTransparency = 1
+    LoadingLabel.Text = "Loading"
+    LoadingLabel.Visible = true
+    tween(LoadingLabel, {TextTransparency = 0}, 0.3)
+    
+    UsernameLabel.Text = "Username: ---"
+    UserIdLabel.Text = "User ID: ---"
+    StatusLabel.Text = "Loading"
+    StatusLabel.TextColor3 = Color3.fromRGB(255, 180, 80)
+    
+    if not targetText or targetText == "" then
+        LoadingLabel.Text = "No Preview"
+        StatusLabel.Text = "Enter Target"
+        return
+    end
+    
+currentPreviewThread = task.spawn(function()
+    if myVersion ~= previewVersion then return end
+    if not PreviewPanel.Visible then return end
+
+    local userId = ResolveUserId(targetText)
+    if myVersion ~= previewVersion then return end
+    if not PreviewPanel.Visible then return end
+
+    if not userId then
+        if myVersion ~= previewVersion then return end
+        LoadingLabel.Text = "User Not Found"
+        LoadingLabel.Visible = true
+        UsernameLabel.Text = "Username: Invalid"
+        StatusLabel.Text = "Not Found"
+        StatusLabel.TextColor3 = COLORS.ERROR
+        return
+    end
+        
+        local username = "User_" .. tostring(userId)
+        username = Players:GetNameFromUserIdAsync(userId)
+        
+        if not PreviewPanel.Visible then return end
+        if myVersion ~= previewVersion then return end
+        UsernameLabel.TextTransparency = 1
+        UserIdLabel.TextTransparency = 1
+        StatusLabel.TextTransparency = 1
+        
+        UsernameLabel.Text = '<font color="rgb(140,160,200)">User:</font> <font color="rgb(255,255,255)">' .. username .. '</font>'
+        UserIdLabel.Text = '<font color="rgb(140,160,200)">ID:</font> <font color="rgb(200,210,230)">' .. tostring(userId) .. '</font>'
+        StatusLabel.Text = "Ready To Apply"
+        StatusLabel.TextColor3 = COLORS.ACCENT_GREEN
+        
+        tween(UsernameLabel, {TextTransparency = 0}, 0.3)
+        task.wait(0.1)
+        tween(UserIdLabel, {TextTransparency = 0}, 0.3)
+        task.wait(0.1)
+        tween(StatusLabel, {TextTransparency = 0}, 0.3)
+        
+        create3DPreview(userId)
+        
+        currentPreviewThread = nil
+    end)
+end
+
+local function isGameTool(item)
+    if item:IsA("Tool") or item:IsA("HopperBin") then
+        return true
+    end
+    return false
+end
+
+local function deepCleanCharacter(character, targetUserId)
+    if targetUserId == LocalPlayer.UserId then
+        return
+    end
+    
+    if currentAppliedUserId == targetUserId then
+        return
+    end
+    ignoreNextChange = true
+    local protectedItems = {}
+    
+    for _, obj in ipairs(character:GetDescendants()) do
+        if obj:IsA("Script") or obj:IsA("LocalScript") or obj:IsA("ModuleScript") then
+            table.insert(protectedItems, obj)
+            if obj.Parent then
+                table.insert(protectedItems, obj.Parent)
+            end
+        end
+    end
+   
+    for _, child in ipairs(character:GetChildren()) do
+        if child:IsA("Tool") or child:IsA("HopperBin") then
+            table.insert(protectedItems, child)
+            for _, desc in ipairs(child:GetDescendants()) do
+                table.insert(protectedItems, desc)
+            end
+        end
+        
+        if child:IsA("BasePart") or child:IsA("Model") then
+            local hasScript = child:FindFirstChildOfClass("Script") or 
+                            child:FindFirstChildOfClass("LocalScript") or
+                            child:FindFirstChildOfClass("ModuleScript")
+            if hasScript then
+                table.insert(protectedItems, child)
+                for _, desc in ipairs(child:GetDescendants()) do
+                    table.insert(protectedItems, desc)
+                end
+            end
+        end
+        
+        local protectedNames = {
+            "Handle", "Blade", "Trail", "Effect", "Aura", 
+            "Grip", "Hitbox", "DamageScript", "AbilityHandler",
+            "Sword", "Ability", "Skill", "Power",
+            "Glove", "Gloves", "Hand", "Hands", "Fist", "Fists",
+            "Gauntlet", "Gauntlets", "Punch", "Combat",
+            "Weapon", "Item", "Equipment", "Gear", "Bio", "UserInfos", "Info", "UserInfo", "info", "User", "user", "ui", "gui", "ScreenGui", "SurfaceGui", "Script", "ModuleScript", "LocalScript", "Raycast", "Collision", "Collider", "HitDetector", "Stat", "Stats", "Health", "Stamina", "Mana", "Cooldown", "Buff", "Debuff", "State", "Ui", "Menu", "menu", "SurfaceBillboard", "ServerEvents", "RemoteConfig", "Remote", "Grass", "Ground", "Map", "Wall", "Helmet", "Motorcycle", "Slap"
+        }
+        
+        for _, name in ipairs(protectedNames) do
+            if child.Name:lower():find(name:lower()) then
+                table.insert(protectedItems, child)
+                for _, desc in ipairs(child:GetDescendants()) do
+                    table.insert(protectedItems, desc)
+                end
+                break
+            end
+        end
+        
+        if child:IsA("Accessory") then
+            local handle = child:FindFirstChild("Handle")
+            if handle then
+                local hasCustomScript = child:FindFirstChildOfClass("Script") or 
+                                       child:FindFirstChildOfClass("LocalScript") or
+                                       handle:FindFirstChildOfClass("Script") or
+                                       handle:FindFirstChildOfClass("LocalScript")
+                local hasAttributes = false
+                for attr, _ in pairs(child:GetAttributes()) do
+                    hasAttributes = true
+                    break
+                end
+                
+                if hasCustomScript or hasAttributes then
+                    table.insert(protectedItems, child)
+                    for _, desc in ipairs(child:GetDescendants()) do
+                        table.insert(protectedItems, desc)
+                    end
+                end
+            end
+        end
+    end
+    
+    for _, child in ipairs(character:GetChildren()) do
+        if table.find(protectedItems, child) then
+            continue
+        end
+        if child:IsA("Accessory") or child:IsA("Hat") then
+            if not table.find(protectedItems, child) then
+                child:Destroy()
+            end
+        elseif child:IsA("BodyColors") then
+            child:Destroy()
+        elseif child:IsA("CharacterMesh") then
+            child:Destroy()
+        end
+    end
+    task.wait(0.1)
+    ignoreNextChange = false
+end
+
+local function countAccessories(character)
+    local count = 0
+    for _, child in ipairs(character:GetChildren()) do
+        if child:IsA("Accessory") or child:IsA("Hat") then
+            count = count + 1
+        end
+    end
+    return count
+end
+
+local function setupCharacterMonitor(character)
+    cleanupCharacterMonitor()
+    
+    if not settings.protectFromSkinChangers or not settings.enabled then
+        return
+    end
+    
+    local monitorDebounce = false
+    local recentChanges = {}
+    
+    local isGameWithSkinChanger = game.PlaceId == 13772394625 or game.PlaceId == 14279693118
+    
+    characterChangeMonitor = trackConnection(character.ChildAdded:Connect(function(child)
+        if ignoreNextChange or isApplyingAvatar or monitorDebounce then
+            return
+        end
+        
+        if child:IsA("Tool") or child:IsA("HopperBin") then
+            return
+        end
+        
+        if isGameWithSkinChanger then
+            local now = tick()
+            local timeSinceApply = now - lastApplicationTime
+            
+            if timeSinceApply < 3 then
+                return
+            end
+            
+            if child:IsA("Accessory") then
+                table.insert(recentChanges, {time = now, item = child})
+            else
+                return
+            end
+            
+            for i = #recentChanges, 1, -1 do
+                if (now - recentChanges[i].time) > 2 then
+                    table.remove(recentChanges, i)
+                end
+            end
+            
+            if #recentChanges >= 12 and settings.enabled and Input.Text ~= "" and currentAppliedUserId then
+                if (now - lastApplicationTime) > REAPPLY_COOLDOWN and reapplyAttempts < MAX_REAPPLY_ATTEMPTS then
+                    monitorDebounce = true
+                    setStatus("conflict_detected", "External Change Detected")
+                    reapplyAttempts = reapplyAttempts + 1
+                    
+                    task.wait(0.2)
+                    
+                    local savedUserId = currentAppliedUserId
+                    currentAppliedUserId = nil
+                    
+                    task.spawn(function()
+                        applyAvatarToCharacter(Input.Text, character)
+                        task.wait(1)
+                        reapplyAttempts = 0
+                        monitorDebounce = false
+                        recentChanges = {}
+                    end)
+                end
+            end
+        else
+            local now = tick()
+            local timeSinceApply = now - lastApplicationTime
+            
+            if timeSinceApply < 2 then
+                return
+            end
+            
+            if child:IsA("Accessory") then
+                table.insert(recentChanges, {time = now, item = child})
+            else
+                return
+            end
+            
+            for i = #recentChanges, 1, -1 do
+                if (now - recentChanges[i].time) > 1.5 then
+                    table.remove(recentChanges, i)
+                end
+            end
+            
+            if #recentChanges >= 8 and settings.enabled and Input.Text ~= "" and currentAppliedUserId then
+                if (now - lastApplicationTime) > REAPPLY_COOLDOWN and reapplyAttempts < MAX_REAPPLY_ATTEMPTS then
+                    monitorDebounce = true
+                    setStatus("conflict_detected", "External Change Detected")
+                    reapplyAttempts = reapplyAttempts + 1
+                    
+                    task.wait(0.1)
+                    
+                    local savedUserId = currentAppliedUserId
+                    currentAppliedUserId = nil
+                    
+                    task.spawn(function()
+                        applyAvatarToCharacter(Input.Text, character)
+                        task.wait(1)
+                        reapplyAttempts = 0
+                        monitorDebounce = false
+                        recentChanges = {}
+                    end)
+                end
+            end
+        end
+    end))
+end
+
+local function loadAsset(assetId)
+    local success, model = retryOperation(function()
+        return InsertService:LoadAsset(assetId)
+    end, 2, 0.2)
+    
+    if success and model then
+        local accessory = model:GetChildren()[1]
+        return accessory
+    end
+    return nil
+end
+
+local function buildAllowedFromUserId(userId:number)
+    local ok, model = pcall(function()
+        return Players:GetCharacterAppearanceAsync(userId)
+    end)
+    if not ok or not model then
+        return nil
+    end
+
+    local allowedAccessories = {}
+    local allowedShirt, allowedPants, allowedGraphic
+
+    for _, inst in ipairs(model:GetChildren()) do
+        if inst:IsA("Accessory") then
+    
+            allowedAccessories[inst.Name] = true
+        elseif inst:IsA("Shirt") then
+            allowedShirt = inst.ShirtTemplate
+        elseif inst:IsA("Pants") then
+            allowedPants = inst.PantsTemplate
+        elseif inst:IsA("ShirtGraphic") then
+            allowedGraphic = inst.Graphic
+        end
+    end
+
+    model:Destroy()
+    return {
+        Accessories = allowedAccessories,
+        Shirt = allowedShirt,
+        Pants = allowedPants,
+        Graphic = allowedGraphic,
+    }
+end
+
+local function selectiveCleanup(Character: Model, allowed)
+    if not allowed then return end
+    local protectedItems = {}
+    for _, obj in ipairs(Character:GetDescendants()) do
+        if obj:IsA("Script") or obj:IsA("LocalScript") or obj:IsA("ModuleScript") then
+            table.insert(protectedItems, obj)
+            if obj.Parent then
+                table.insert(protectedItems, obj.Parent)
+            end
+        end
+    end
+    
+    for _, child in ipairs(Character:GetChildren()) do
+        if child:IsA("Tool") or child:IsA("HopperBin") then
+            table.insert(protectedItems, child)
+            for _, desc in ipairs(child:GetDescendants()) do
+                table.insert(protectedItems, desc)
+            end
+        end
+        
+        if child:IsA("BasePart") or child:IsA("Model") then
+            local hasScript = child:FindFirstChildOfClass("Script") or 
+                            child:FindFirstChildOfClass("LocalScript") or
+                            child:FindFirstChildOfClass("ModuleScript")
+            if hasScript then
+                table.insert(protectedItems, child)
+                for _, desc in ipairs(child:GetDescendants()) do
+                    table.insert(protectedItems, desc)
+                end
+            end
+        end
+        
+        if child:IsA("Accessory") then
+            local hasCustomScript = child:FindFirstChildOfClass("Script") or 
+                                   child:FindFirstChildOfClass("LocalScript")
+            local hasAttributes = false
+            for attr, _ in pairs(child:GetAttributes()) do
+                hasAttributes = true
+                break
+            end
+            
+            if hasCustomScript or hasAttributes then
+                table.insert(protectedItems, child)
+                for _, desc in ipairs(child:GetDescendants()) do
+                    table.insert(protectedItems, desc)
+                end
+            end
+        end
+    end
+
+    for _, v in ipairs(Character:GetChildren()) do
+        if table.find(protectedItems, v) then
+            continue
+        end
+        
+        if v:IsA("Accessory") then
+            if not allowed.Accessories[v.Name] then
+                v:Destroy()
+            end
+
+        elseif v:IsA("Shirt") then
+            if allowed.Shirt and v.ShirtTemplate ~= allowed.Shirt then
+                v:Destroy()
+            end
+
+        elseif v:IsA("Pants") then
+            if allowed.Pants and v.PantsTemplate ~= allowed.Pants then
+                v:Destroy()
+            end
+
+        elseif v:IsA("ShirtGraphic") then
+            if allowed.Graphic and v.Graphic ~= allowed.Graphic then
+                v:Destroy()
+            end
+        end
+    end
+end
+
+local ReapplyConnection = nil
+local buttonDebounce = false
+
+local function applyAvatarToCharacter(targetText, character)
+    if _G.CanApplyAvatar and not _G.CanApplyAvatar() then
+        setStatus("wait")
+        isApplyingAvatar = false
+        ignoreNextChange = false
+        return false
+    end
+    
+    if not canStartApplication() then 
+        setStatus("wait")
+        return false 
+    end
+    
+    isApplyingAvatar = true
+    ignoreNextChange = true
+    
+    local userId = ResolveUserId(targetText)
+    if not userId then 
+        setState(ApplicationState.ERROR)
+        setStatus("not_found")
+        task.wait(0.5)
+        setState(ApplicationState.IDLE)
+        setStatus("ready")
+        isApplyingAvatar = false
+        ignoreNextChange = false
+        return false 
+    end
+    
+    if currentAppliedUserId == userId then
+        local character = LocalPlayer.Character
+        if character then
+            local hum = character:FindFirstChildOfClass("Humanoid")
+            local desc = getDescriptionWithCache(userId)
+            
+            if hum and desc then
+                local needsReapply = false
+                
+                local hasShirt = character:FindFirstChildOfClass("Shirt")
+                local hasPants = character:FindFirstChildOfClass("Pants")
+                if (desc.Shirt and desc.Shirt ~= "" and tonumber(desc.Shirt) and tonumber(desc.Shirt) > 0 and not hasShirt) then
+                    needsReapply = true
+                end
+                if (desc.Pants and desc.Pants ~= "" and tonumber(desc.Pants) and tonumber(desc.Pants) > 0 and not hasPants) then
+                    needsReapply = true
+                end
+                
+                local currentAccessoryCount = countAccessories(character)
+                local targetAccessoryCount = 0
+                for _, field in ipairs({"HatAccessory", "HairAccessory", "FaceAccessory", "NeckAccessory", "FrontAccessory", "BackAccessory", "WaistAccessory"}) do
+                    if desc[field] and desc[field] ~= "" then
+                        for _ in string.gmatch(desc[field], "%d+") do
+                            targetAccessoryCount = targetAccessoryCount + 1
+                        end
+                    end
+                end
+                
+                if not needsReapply and currentAccessoryCount >= targetAccessoryCount then
+                    setStatus("already")
+                    task.wait(0.5)
+                    if settings.enabled then
+                        setStatus("auto_active")
+                    else
+                        setState(ApplicationState.IDLE)
+                        setStatus("ready")
+                    end
+                    isApplyingAvatar = false
+                    ignoreNextChange = false
+                    return false
+                end
+            else
+                setStatus("already")
+                task.wait(0.5)
+                if settings.enabled then
+                    setStatus("auto_active")
+                else
+                    setState(ApplicationState.IDLE)
+                    setStatus("ready")
+                end
+                isApplyingAvatar = false
+                ignoreNextChange = false
+                return false
+            end
+        end
+    end
+
+    setState(ApplicationState.FETCHING)
+    setStatus("fetching")
+    
+    local desc = getDescriptionWithCache(userId)
+    if not desc then 
+        setState(ApplicationState.ERROR)
+        setStatus("fetch_failed")
+        task.wait(0.5)
+        setState(ApplicationState.IDLE)
+        setStatus("ready")
+        isApplyingAvatar = false
+        ignoreNextChange = false
+        return false 
+    end
+
+    if not character:FindFirstChild("HumanoidRootPart") then
+        character:WaitForChild("HumanoidRootPart", 5)
+    end
+    
+    local hum = character:FindFirstChildOfClass("Humanoid")
+    if not hum then
+        hum = character:WaitForChild("Humanoid", 5)
+    end
+    
+    if not hum then 
+        setState(ApplicationState.ERROR)
+        setStatus("no_humanoid")
+        task.wait(0.5)
+        setState(ApplicationState.IDLE)
+        setStatus("ready")
+        isApplyingAvatar = false
+        ignoreNextChange = false
+        return false 
+    end
+
+    local previousAppliedUserId = currentAppliedUserId
+    currentAppliedUserId = nil
+    
+    setState(ApplicationState.CLEANING)
+    setStatus("cleaning")
+
+    local allowedItems = buildAllowedFromUserId(userId)
+
+    if allowedItems then
+        selectiveCleanup(character, allowedItems)
+    else
+        deepCleanCharacter(character, userId)
+    end
+    
+    currentAppliedUserId = userId
+
+    setState(ApplicationState.APPLYING)
+    setStatus("applying")
+    
+    local targetFace = desc.Face
+    local shouldChangeFace = needsFaceUpdate(character, targetFace)
+
+    local currentTools = {}
+    local storedWelds = {}
+    for _, child in ipairs(character:GetChildren()) do
+        if child:IsA("Tool") then
+            table.insert(currentTools, child)
+        end
+    end
+
+    for _, obj in ipairs(character:GetDescendants()) do
+        if obj:IsA("Weld") then
+            local weldData = {
+                instance = obj,
+                parent = obj.Parent,
+                part0 = obj.Part0,
+                part1 = obj.Part1,
+                c0 = obj.C0,
+                c1 = obj.C1,
+                className = "Weld"
+            }
+            table.insert(storedWelds, weldData)
+        elseif obj:IsA("WeldConstraint") then
+            local weldData = {
+                instance = obj,
+                parent = obj.Parent,
+                part0 = obj.Part0,
+                part1 = obj.Part1,
+                className = "WeldConstraint"
+            }
+            table.insert(storedWelds, weldData)
+        end
+    end
+
+    local applySuccess = false
+    if _G.SafeApplyDescription then
+        applySuccess = _G.SafeApplyDescription(hum, desc)
+        task.wait(0.2)
+    else
+        task.wait(0.2)
+        local applyMethod = hum.ApplyDescriptionClientServer or hum.ApplyDescription
+        if applyMethod then
+            applyMethod(hum, desc)
+            applySuccess = true
+        end
+    end
+    
+    for _, tool in ipairs(currentTools) do
+        if tool and tool.Parent ~= character then
+            tool.Parent = character
+        end
+    end
+
+    for _, weldData in ipairs(storedWelds) do
+        local weld = weldData.instance
+        if weld and weld.Parent and weldData.part0 and weldData.part1 then
+            weld.Part0 = weldData.part0
+            weld.Part1 = weldData.part1
+            
+            if weldData.className == "Weld" then
+                weld.C0 = weldData.c0
+                weld.C1 = weldData.c1
+            end
+        elseif not weld or not weld.Parent then
+            local newWeld = Instance.new(weldData.className)
+            newWeld.Part0 = weldData.part0
+            newWeld.Part1 = weldData.part1
+            
+            if weldData.className == "Weld" then
+                newWeld.C0 = weldData.c0
+                newWeld.C1 = weldData.c1
+            end
+            
+            newWeld.Parent = weldData.parent
+        end
+    end
+    
+    local bodyColors = character:FindFirstChildOfClass("BodyColors")
+    if not bodyColors then
+        bodyColors = Instance.new("BodyColors")
+        bodyColors.Parent = character
+    end
+    
+    bodyColors.HeadColor3 = desc.HeadColor
+    bodyColors.TorsoColor3 = desc.TorsoColor
+    bodyColors.LeftArmColor3 = desc.LeftArmColor
+    bodyColors.RightArmColor3 = desc.RightArmColor
+    bodyColors.LeftLegColor3 = desc.LeftLegColor
+    bodyColors.RightLegColor3 = desc.RightLegColor
+
+    
+task.spawn(function()
+    task.wait(0.25)
+    for _, obj in ipairs(character:GetChildren()) do
+        if obj:IsA("Shirt") and obj.ShirtTemplate then
+            local url = obj.ShirtTemplate
+            obj.ShirtTemplate = ""
+            task.wait(0.25)
+            obj.ShirtTemplate = url
+        elseif obj:IsA("Pants") and obj.PantsTemplate then
+            local url = obj.PantsTemplate
+            obj.PantsTemplate = ""
+            task.wait(0.1)
+            obj.PantsTemplate = url
+        elseif obj:IsA("ShirtGraphic") and obj.Graphic then
+            local url = obj.Graphic
+            obj.Graphic = ""
+            task.wait(0.25)
+            obj.Graphic = url
+        end
+    end
+end)
+    setState(ApplicationState.LOADING_ACCESSORIES)
+    setStatus("accessories")
+    
+    local accessoryList = {}
+    if desc.HatAccessory and desc.HatAccessory ~= "" then table.insert(accessoryList, desc.HatAccessory) end
+    if desc.HairAccessory and desc.HairAccessory ~= "" then table.insert(accessoryList, desc.HairAccessory) end
+    if desc.FaceAccessory and desc.FaceAccessory ~= "" then table.insert(accessoryList, desc.FaceAccessory) end
+    if desc.NeckAccessory and desc.NeckAccessory ~= "" then table.insert(accessoryList, desc.NeckAccessory) end
+    if desc.FrontAccessory and desc.FrontAccessory ~= "" then table.insert(accessoryList, desc.FrontAccessory) end
+    if desc.BackAccessory and desc.BackAccessory ~= "" then table.insert(accessoryList, desc.BackAccessory) end
+    if desc.WaistAccessory and desc.WaistAccessory ~= "" then table.insert(accessoryList, desc.WaistAccessory) end
+    
+    local loadedCount = 0
+    local loadStart = tick()
+    local accessoryThreads = {}
+    
+    for _, accessoryId in ipairs(accessoryList) do
+        local thread = task.spawn(function()
+            if (tick() - loadStart) > ACCESSORY_LOAD_TIMEOUT then
+                return
+            end
+            
+            local assetId = tonumber(accessoryId)
+            if assetId and assetId > 0 then
+                local accessory = loadAsset(assetId)
+                if accessory and accessory:IsA("Accessory") then
+                    if (tick() - loadStart) <= ACCESSORY_LOAD_TIMEOUT then
+                        accessory.Parent = character
+                        if hum then
+                            task.wait(0.1)
+                            hum:AddAccessory(accessory)
+                        end
+                        loadedCount = loadedCount + 1
+                    else
+                        accessory:Destroy()
+                    end
+                end
+            end
+        end)
+        table.insert(accessoryThreads, thread)
+    end
+    
+    local waitTime = 0
+    while loadedCount < #accessoryList and waitTime < ACCESSORY_LOAD_TIMEOUT do
+        task.wait(0.1)
+        waitTime = waitTime + 0.1
+    end
+    
+    if waitTime >= ACCESSORY_LOAD_TIMEOUT then
+        for _, thread in ipairs(accessoryThreads) do
+            task.cancel(thread)
+        end
+    end
+    isApplyingAvatar = false
+    ignoreNextChange = false
+
+    setState(ApplicationState.COMPLETE)
+    setStatus("success", "Avatar Applied")
+
+    setupCharacterMonitor(character)
+
+    task.wait(0.1)
+    if settings.enabled then
+        setState(ApplicationState.IDLE)
+        setStatus("auto_active")
+    else
+        setState(ApplicationState.IDLE)
+        setStatus("ready")
+    end
+    
+    if _G.MarkApplied then
+        _G.MarkApplied()
+    end
+    
+    return true
+end
+
+local isGeneratingRandom = false
+
+trackConnection(RandomBtn.MouseButton1Click:Connect(function()
+    if not canStartApplication() then
+        setStatus("wait")
+        return
+    end
+    if buttonDebounce or isGeneratingRandom then 
+        return 
+    end
+    isGeneratingRandom = true
+    buttonDebounce = true
+    setStatus("fetching", "Finding Random ID")
+    local function getRandomAvatarID()
+        if #GOOD_AVATARS <= MAX_RECENT_IDS then
+            return GOOD_AVATARS[math.random(1, #GOOD_AVATARS)]
+        end
+        
+        local availableIDs = {}
+        for _, id in ipairs(GOOD_AVATARS) do
+            local isRecent = false
+            for _, recentID in ipairs(recentlyUsedIDs) do
+                if recentID == id then
+                    isRecent = true
+                    break
+                end
+            end
+            if not isRecent then
+                table.insert(availableIDs, id)
+            end
+        end
+        
+        if #availableIDs == 0 then
+            table.clear(recentlyUsedIDs)
+            availableIDs = {table.unpack(GOOD_AVATARS)}
+        end
+        
+        local randomId = availableIDs[math.random(1, #availableIDs)]
+        
+        table.insert(recentlyUsedIDs, randomId)
+        if #recentlyUsedIDs > MAX_RECENT_IDS then
+            table.remove(recentlyUsedIDs, 1)
+        end
+        
+        return randomId
+    end
+    local randomId = getRandomAvatarID()
+    local success, result = pcall(function()
+        return Players:GetNameFromUserIdAsync(randomId)
+    end)
+    if success and result then
+        Input.Text = tostring(randomId)
+        settings.target = Input.Text
+        safeWrite(settings)
+        lastRequestedUserId = nil
+        setStatus("success", "Random ID: " .. randomId)
+        if settings.enabled and LocalPlayer.Character then
+            task.wait(0.2)
+            applyAvatarToCharacter(Input.Text, LocalPlayer.Character)
+        else
+            task.wait(0.1)
+            setState(ApplicationState.IDLE)
+            setStatus("ready")
+        end
+    else
+        setState(ApplicationState.ERROR)
+        setStatus("invalid", "ID Is Wrong")
+        task.wait(0.5)
+        setState(ApplicationState.IDLE)
+        setStatus("ready")
+    end
+    
+    task.delay(1, function()
+        isGeneratingRandom = false
+        buttonDebounce = false
+    end)
+end))
+
+local function updateToggleVisual(state)
+    ToggleBtn.Text = state and "On" or "Off"
+    ToggleBtn.BackgroundColor3 = state and COLORS.BUTTON_SUCCESS or COLORS.BUTTON_ERROR
+end
+
+local function SetToggle(state)
+    settings.enabled = state
+    PersistToggle.Text = state and "Enabled" or "Disabled"
+    PersistToggle.BackgroundColor3 = state and COLORS.BUTTON_SUCCESS or COLORS.BUTTON_ERROR
+    safeWrite(settings)
+    updateToggleVisual(state)
+
+    if state then
+        if LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart") then 
+            task.wait(0.2)
+            applyAvatarToCharacter(Input.Text, LocalPlayer.Character)
+        end
+        
+        if ReapplyConnection then 
+            ReapplyConnection:Disconnect()
+        end
+        
+        ReapplyConnection = trackConnection(LocalPlayer.CharacterAdded:Connect(function(char)
+            currentAppliedUserId = nil
+            lastApplicationTime = 0
+            lastRequestedUserId = nil
+            setState(ApplicationState.IDLE)
+            
+            char:WaitForChild("HumanoidRootPart", 10)
+            task.wait(0.15)
+            if settings.enabled and Input.Text ~= "" then 
+                applyAvatarToCharacter(Input.Text, char)
+            end
+        end))
+        
+        setState(ApplicationState.IDLE)
+        setStatus("auto_active")
+        
+    else
+        if ReapplyConnection then 
+            ReapplyConnection:Disconnect()
+            for i, conn in ipairs(connections) do
+                if conn == ReapplyConnection then
+                    table.remove(connections, i)
+                    break
+                end
+            end
+        end
+        ReapplyConnection = nil
+        cleanupCharacterMonitor()
+        
+        local wasAppliedToOther = currentAppliedUserId and currentAppliedUserId ~= LocalPlayer.UserId
+        
+        currentAppliedUserId = nil
+        lastRequestedUserId = nil
+        lastApplicationTime = 0
+        setState(ApplicationState.IDLE)
+        
+        if wasAppliedToOther and LocalPlayer.Character then
+            task.spawn(function()
+                local character = LocalPlayer.Character
+                local hum = character:FindFirstChildOfClass("Humanoid")
+                
+                if not hum then
+                    setStatus("ready")
+                    return
+                end
+                
+                ignoreNextChange = true
+                
+                local equippedTools = {}
+                for _, child in ipairs(character:GetChildren()) do
+                    if child:IsA("Tool") or child:IsA("HopperBin") then
+                        table.insert(equippedTools, child)
+                    end
+                end
+                
+                for _, child in ipairs(character:GetChildren()) do
+                    if child:IsA("Tool") or child:IsA("HopperBin") then
+                        continue
+                    end
+                    
+                    if child:IsA("Accessory") or child:IsA("Hat") then
+                        child:Destroy()
+                    elseif child:IsA("Shirt") or child:IsA("Pants") or child:IsA("ShirtGraphic") then
+                        child:Destroy()
+                    elseif child:IsA("BodyColors") then
+                        child:Destroy()
+                    elseif child:IsA("CharacterMesh") then
+                        child:Destroy()
+                    end
+                end
+                
+                local success, desc = retryOperation(function() 
+                    return Players:GetHumanoidDescriptionFromUserId(LocalPlayer.UserId) 
+                end, 3, 0.5)
+                
+                if not success or not desc then
+                    ignoreNextChange = false
+                    setStatus("ready")
+                    return
+                end
+                
+            task.spawn(function()
+            task.wait(0.2)
+               playTransitionEffect(character, currentTransitionEffect)
+              end)
+                
+                if hum.ApplyDescriptionClientServer then 
+                    hum:ApplyDescriptionClientServer(desc)
+                elseif hum.ApplyDescription then
+                    hum:ApplyDescription(desc)
+                end
+                
+                task.wait(0.1)
+                
+                for _, tool in ipairs(equippedTools) do
+                    if tool and tool.Parent ~= character then
+                        tool.Parent = character
+                    end
+                end
+                
+                local accessoryList = {}
+                for _, accessoryField in ipairs({
+                    "HatAccessory", "HairAccessory", "FaceAccessory", "NeckAccessory",
+                     "FrontAccessory", "BackAccessory", "WaistAccessory"
+                }) do
+                    if desc[accessoryField] and desc[accessoryField] ~= "" then 
+                        for id in string.gmatch(desc[accessoryField], "%d+") do
+                            table.insert(accessoryList, tonumber(id))
+                        end
+                    end
+                end
+                
+                for _, assetId in ipairs(accessoryList) do
+                    task.spawn(function()
+                        local accessory = loadAsset(assetId)
+                        if accessory and accessory:IsA("Accessory") then
+                            accessory.Parent = character
+                            task.wait(0.2)
+                            if hum then
+                                hum:AddAccessory(accessory)
+                            end
+                        end
+                    end)
+                end
+                
+                task.wait(0.2)
+                
+                if desc.Shirt and desc.Shirt ~= "" and tonumber(desc.Shirt) and tonumber(desc.Shirt) > 0 then
+                    local shirt = Instance.new("Shirt")
+                    shirt.ShirtTemplate = "rbxassetid://" .. desc.Shirt
+                    shirt.Parent = character
+                end
+                
+                if desc.Pants and desc.Pants ~= "" and tonumber(desc.Pants) and tonumber(desc.Pants) > 0 then
+                    local pants = Instance.new("Pants")
+                    pants.PantsTemplate = "rbxassetid://" .. desc.Pants
+                    pants.Parent = character
+                end
+                
+                if desc.GraphicTShirt and desc.GraphicTShirt ~= "" and tonumber(desc.GraphicTShirt) and tonumber(desc.GraphicTShirt) > 0 then
+                    local graphic = Instance.new("ShirtGraphic")
+                    graphic.Graphic = "rbxassetid://" .. desc.GraphicTShirt
+                    graphic.Parent = character
+                end
+                task.wait(0.1)
+                if currentAppliedUserId == LocalPlayer.UserId then
+                    hum:ApplyDescriptionClientServer(Players:GetHumanoidDescriptionFromUserId(LocalPlayer.UserId))
+                else
+                    hum:ApplyDescriptionClientServer(desc)
+                end
+                task.wait(0.1)
+                for _, tool in ipairs(equippedTools) do
+                    if tool and tool.Parent then
+                        if tool.Parent ~= character and tool.Parent.Name ~= "Backpack" then
+                            tool.Parent = character
+                        end
+                    end
+                end
+                task.wait(0.1)
+                ignoreNextChange = false
+            end)
+        end
+        setStatus("ready")
+    end
+end
+
+trackConnection(ApplyBtn.MouseButton1Click:Connect(function()
+    
+    if not canStartApplication() then
+        setStatus("wait")
+        return
+    end
+    
+    if buttonDebounce then 
+        return 
+    end
+    buttonDebounce = true
+    
+    if Input.Text == "" then 
+        setState(ApplicationState.ERROR)
+        setStatus("no_target")
+        task.wait(0.5)
+        setState(ApplicationState.IDLE)
+        setStatus("ready")
+        buttonDebounce = false
+        return 
+    end
+    
+    local userId = ResolveUserId(Input.Text)
+    if not userId then
+        setState(ApplicationState.ERROR)
+        setStatus("invalid")
+        task.wait(0.5)
+        setState(ApplicationState.IDLE)
+        setStatus("ready")
+        buttonDebounce = false
+        return
+    end
+    
+    if lastRequestedUserId == userId or currentAppliedUserId == userId then
+        setStatus("already")
+        task.wait(1)
+        if settings.enabled then
+            setStatus("auto_active")
+        else
+            setStatus("ready")
+        end
+        buttonDebounce = false
+        return
+    end
+    
+    lastRequestedUserId = userId
+    
+    settings.target = Input.Text
+    safeWrite(settings)
+    
+    if LocalPlayer.Character then
+        applyAvatarToCharacter(Input.Text, LocalPlayer.Character)
+    end
+    
+    task.delay(1, function()
+        buttonDebounce = false
+    end)
+end))
+
+trackConnection(PersistToggle.MouseButton1Click:Connect(function()
+    
+    if not canStartApplication() then
+        setStatus("wait")
+        return
+    end
+    
+    if buttonDebounce or autoApplyCooldown then
+        return 
+    end
+    
+    buttonDebounce = true
+    autoApplyCooldown = true
+    
+    if Input.Text == "" then
+        setState(ApplicationState.ERROR)
+        setStatus("no_target")
+        task.wait(0.5)
+        setState(ApplicationState.IDLE)
+        setStatus("ready")
+        buttonDebounce = false
+        task.delay(AUTO_APPLY_COOLDOWN_TIME, function()
+            autoApplyCooldown = false
+        end)
+        return
+    end
+    
+    if not settings.enabled then
+        local userId = ResolveUserId(Input.Text)
+        if userId and currentAppliedUserId == userId and (tick() - lastApplicationTime) < APPLICATION_COOLDOWN then
+            setStatus("already")
+            task.wait(0.5)
+            setState(ApplicationState.IDLE)
+            setStatus("ready")
+            buttonDebounce = false
+            task.delay(AUTO_APPLY_COOLDOWN_TIME, function()
+                autoApplyCooldown = false
+            end)
+            return
+        end
+    end
+    
+    settings.target = Input.Text
+    safeWrite(settings)
+    SetToggle(not settings.enabled)
+    
+    task.delay(1, function()
+        buttonDebounce = false
+    end)
+    
+    task.delay(AUTO_APPLY_COOLDOWN_TIME, function()
+        autoApplyCooldown = false
+    end)
+end))
+
+trackConnection(ToggleBtn.MouseButton1Click:Connect(function()
+
+    if not canStartApplication() then
+        setStatus("wait")
+        return
+    end
+    
+    if buttonDebounce or autoApplyCooldown then
+        return 
+    end
+    
+    buttonDebounce = true
+    autoApplyCooldown = true
+    
+    if Input.Text == "" then
+        setState(ApplicationState.ERROR)
+        setStatus("no_target")
+        task.wait(0.5)
+        setState(ApplicationState.IDLE)
+        setStatus("ready")
+        buttonDebounce = false
+        task.delay(AUTO_APPLY_COOLDOWN_TIME, function()
+            autoApplyCooldown = false
+        end)
+        return
+    end
+    
+    if not settings.enabled then
+        local userId = ResolveUserId(Input.Text)
+        if userId and currentAppliedUserId == userId and (tick() - lastApplicationTime) < APPLICATION_COOLDOWN then
+            setStatus("already")
+            task.wait(0.35)
+            setState(ApplicationState.IDLE)
+            setStatus("ready")
+            buttonDebounce = false
+            task.delay(AUTO_APPLY_COOLDOWN_TIME, function()
+                autoApplyCooldown = false
+            end)
+            return
+        end
+    end
+    
+    settings.target = Input.Text
+    safeWrite(settings)
+    SetToggle(not settings.enabled)
+    
+    task.delay(1, function()
+        buttonDebounce = false
+    end)
+    
+    task.delay(AUTO_APPLY_COOLDOWN_TIME, function()
+        autoApplyCooldown = false
+    end)
+end))
+
+addButtonFeedback(ApplyBtn, COLORS.BUTTON_APPLY)
+addButtonFeedback(Mini, COLORS.BUTTON_NORMAL)
+addButtonFeedback(PreviewToggle, COLORS.BUTTON_NORMAL)
+
+local isTogglingVisibility = false
+
+local function toggleUIVisibility()
+    if isTogglingVisibility then
+        return
+    end
+    
+    isTogglingVisibility = true
+    settings.uiHidden = not settings.uiHidden
+    safeWrite(settings)
+    
+    if settings.uiHidden then
+            if rainbowLoop then
+            task.cancel(rainbowLoop)
+            rainbowLoop = nil
+        end
+        ToggleBtnIcon.Text = "🔒️"
+        tween(Frame, {BackgroundTransparency = 1}, ANIMATION_DURATION)
+        for _, child in ipairs(Frame:GetDescendants()) do
+            if child:IsA("TextLabel") or child:IsA("TextButton") or child:IsA("TextBox") then
+                tween(child, {TextTransparency = 1}, ANIMATION_DURATION)
+                if child:IsA("TextButton") or child:IsA("TextBox") then
+                    tween(child, {BackgroundTransparency = 1}, ANIMATION_DURATION)
+                end
+            elseif child:IsA("ImageLabel") then
+                tween(child, {ImageTransparency = 1}, ANIMATION_DURATION)
+            elseif child:IsA("Frame") and child.Name ~= "Glow" then
+                tween(child, {BackgroundTransparency = 1}, ANIMATION_DURATION)
+            elseif child:IsA("UIStroke") then
+                tween(child, {Transparency = 1}, ANIMATION_DURATION)
+            end
+        end
+        
+        local wasPreviewVisible = PreviewPanel.Visible
+        if wasPreviewVisible then
+            task.spawn(function()
+                fadeOutPreviewElement(ViewportContainer, 0)
+                fadeOutPreviewElement(RotationControls, 0.05)
+                fadeOutPreviewElement(UserInfoContainer, 0.1)
+                fadeOutPreviewElement(PreviewHeader, 0.15)
+                fadeOutPreviewElement(PreviewDivider, 0.15)
+                fadeOutPreviewElement(PreviewStroke, 0.2)
+                
+                for _, child in ipairs(ViewportContainer:GetDescendants()) do
+                    if child:IsA("TextButton") then
+                        fadeOutPreviewElement(child, 0.05)
+                    end
+                end
+                
+                for _, child in ipairs(UserInfoContainer:GetChildren()) do
+                    if child:IsA("TextLabel") then
+                        fadeOutPreviewElement(child, 0.1)
+                    end
+                end
+            end)
+            
+            tween(PreviewPanel, {BackgroundTransparency = 1}, ANIMATION_DURATION + 0.2)
+        end
+        
+        tween(ToggleVisibilityBtn, {BackgroundColor3 = Color3.fromRGB(25, 25, 25)}, ANIMATION_DURATION)
+tween(ToggleBtnStroke, {Color = Color3.fromRGB(0, 0, 0)}, ANIMATION_DURATION)
+ToggleBtnGlow.ImageColor3 = Color3.fromRGB(0, 0, 0)
+        
+        task.wait(0.1)
+        Frame.Visible = false
+        if wasPreviewVisible then
+            PreviewPanel.Visible = false
+        end
+        
+    else
+        ToggleBtnIcon.Text = "🔓"
+        local targetPos = UDim2.new(settings.uiPos.x, settings.uiPos.offsetX, settings.uiPos.y, settings.uiPos.offsetY)
+        Frame.Position = targetPos
+        Frame.Visible = true
+        Frame.BackgroundTransparency = 1
+        startRainbowAnimation()
+        
+        for _, child in ipairs(Frame:GetDescendants()) do
+            if child:IsA("TextLabel") or child:IsA("TextButton") or child:IsA("TextBox") then
+                child.TextTransparency = 1
+                if child:IsA("TextButton") or child:IsA("TextBox") then
+                    child.BackgroundTransparency = 1
+                end
+            elseif child:IsA("ImageLabel") then
+                child.ImageTransparency = 1
+            elseif child:IsA("Frame") and child.Name ~= "Glow" then
+                child.BackgroundTransparency = 1
+            elseif child:IsA("UIStroke") then
+                child.Transparency = 1
+            end
+        end
+        
+        tween(Frame, {BackgroundTransparency = 0.1}, 0.4)
+        task.wait(0.1)
+        
+        for _, child in ipairs(Frame:GetDescendants()) do
+            if child:IsA("TextLabel") or child:IsA("TextButton") or child:IsA("TextBox") then
+                tween(child, {TextTransparency = 0}, ANIMATION_DURATION)
+                if child:IsA("TextButton") then
+                    local originalTransparency = 0.15
+                    if child.Name == "Minimize" or child.Name == "PreviewToggle" then
+                        originalTransparency = 0.3
+                    elseif child.Name == "ToggleBtn" then
+                        originalTransparency = 0.15
+                    end
+                    tween(child, {BackgroundTransparency = originalTransparency}, ANIMATION_DURATION)
+                elseif child:IsA("TextBox") then
+                    tween(child, {BackgroundTransparency = 0.12}, ANIMATION_DURATION)
+                end
+            elseif child:IsA("ImageLabel") and child.Name == "Glow" then
+                tween(child, {ImageTransparency = 0.6}, ANIMATION_DURATION)
+            elseif child:IsA("Frame") and child.Name == "StatusDot" then
+                tween(child, {BackgroundTransparency = 0}, ANIMATION_DURATION)
+            elseif child:IsA("UIStroke") then
+                local originalTransparency = 0.35
+                if child.Parent == Frame then
+                    originalTransparency = 0.35
+                end
+                tween(child, {Transparency = originalTransparency}, ANIMATION_DURATION)
+            end
+        end
+        
+        if settings.showPreview then
+            PreviewPanel.Visible = true
+            PreviewPanel.BackgroundTransparency = 1
+            
+            for _, child in ipairs(PreviewPanel:GetDescendants()) do
+                if child:IsA("TextLabel") or child:IsA("TextButton") then
+                    child.TextTransparency = 1
+                elseif child:IsA("ImageLabel") then
+                    child.ImageTransparency = 1
+                elseif child:IsA("Frame") and child.Name ~= "Glow" then
+                    child.BackgroundTransparency = 1
+                elseif child:IsA("UIStroke") then
+                    child.Transparency = 1
+                end
+            end
+            
+            task.wait(0.1)
+            updatePreviewPosition()
+            
+            tween(PreviewPanel, {BackgroundTransparency = 0.15}, ANIMATION_DURATION)
+            
+            task.spawn(function()
+fadeInPreviewElement(PreviewStroke, 0.3, 0)
+        fadeInPreviewElement(PreviewHeader, 0.2, 0.05)
+        fadeInPreviewElement(PreviewTitle, 0, 0.1)
+        fadeInPreviewElement(PreviewIcon, 0, 0.1)
+        fadeInPreviewElement(PreviewDivider, 0.5, 0.15)
+        fadeInPreviewElement(ViewportContainer, 0.3, 0.2)
+        fadeInPreviewElement(ViewportStroke, 0.6, 0.2)
+        fadeInPreviewElement(RotationControls, 0.4, 0.25)
+        fadeInPreviewElement(UserInfoContainer, 1, 0.3)
+        
+        for _, child in ipairs(RotationControls:GetChildren()) do
+            if child:IsA("TextButton") then
+                fadeInPreviewElement(child, 0, 0.3)
+            end
+        end
+
+        for _, child in ipairs(UserInfoContainer:GetChildren()) do
+            if child:IsA("TextLabel") then
+                fadeInPreviewElement(child, 0, 0.35)
+            end
+        end
+    end)
+end
+        
+        tween(ToggleVisibilityBtn, {BackgroundColor3 = Color3.fromRGB(20, 20, 20)}, ANIMATION_DURATION)
+        tween(ToggleBtnStroke, {Color = Color3.fromRGB(0, 0, 0)}, ANIMATION_DURATION)
+        ToggleBtnGlow.ImageColor3 = Color3.fromRGB(0, 0, 0)
+        task.wait(0.2)
+    end
+    
+    tween(ToggleVisibilityBtn, {Size = UDim2.new(0, 62, 0, 62)}, 0.1, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
+    task.wait(0.1)
+    tween(ToggleVisibilityBtn, {Size = UDim2.new(0, BUTTON_DEFAULT_SIZE, 0, BUTTON_DEFAULT_SIZE)}, 0.2, Enum.EasingStyle.Back, Enum.EasingDirection.Out)
+    
+    isTogglingVisibility = false
+end
+
+trackConnection(ToggleVisibilityBtn.MouseEnter:Connect(function()
+    if not toggleDragging and not isTogglingVisibility then
+        tween(ToggleVisibilityBtn, {Size = UDim2.new(0, BUTTON_HOVER_SIZE, 0, BUTTON_HOVER_SIZE)}, 0.2, Enum.EasingStyle.Back, Enum.EasingDirection.Out)
+        tween(ToggleBtnStroke, {Thickness = 3}, 0.2)
+        tween(ToggleBtnGlow, {ImageTransparency = 0.4}, 0.2)
+    end
+end))
+
+trackConnection(ToggleVisibilityBtn.MouseButton1Click:Connect(function()
+    toggleUIVisibility()
+end))
+
+trackConnection(ToggleVisibilityBtn.MouseLeave:Connect(function()
+    if not toggleDragging and not isTogglingVisibility then
+        tween(ToggleVisibilityBtn, {Size = UDim2.new(0, BUTTON_DEFAULT_SIZE, 0, BUTTON_DEFAULT_SIZE)}, 0.2, Enum.EasingStyle.Back, Enum.EasingDirection.Out)
+        tween(ToggleBtnStroke, {Thickness = 2.5}, 0.2)
+        tween(ToggleBtnGlow, {ImageTransparency = 0.6}, 0.2)
+    end
+end))
+
+trackConnection(Input:GetPropertyChangedSignal("Text"):Connect(function()
+    if PreviewPanel.Visible then
+        loadPreview(Input.Text)
+    end
+end))
+
+trackConnection(PreviewToggle.MouseButton1Click:Connect(function()
+    if previewToggleCooldown then 
+        tween(PreviewToggle, {BackgroundColor3 = COLORS.WARNING}, 0.1)
+        task.wait(0.1)
+        tween(PreviewToggle, {BackgroundColor3 = settings.showPreview and Color3.fromRGB(20, 20, 20) or COLORS.BUTTON_NORMAL}, 0.1)
+        return 
+    end
+    previewToggleCooldown = true
+    settings.showPreview = not settings.showPreview
+    safeWrite(settings)
+    
+    if settings.showPreview then
+        PreviewToggle.BackgroundColor3 = Color3.fromRGB(20, 20, 20)
+        PreviewPanel.Visible = true
+        
+        PreviewPanel.BackgroundTransparency = 1
+        for _, child in ipairs(PreviewPanel:GetDescendants()) do
+            if child:IsA("TextLabel") or child:IsA("TextButton") then
+                child.TextTransparency = 1
+            elseif child:IsA("Frame") then
+                child.BackgroundTransparency = 1
+            elseif child:IsA("ImageLabel") then
+                child.ImageTransparency = 1
+            elseif child:IsA("UIStroke") then
+                child.Transparency = 1
+            end
+        end
+        
+        updatePreviewPosition()
+        
+        task.spawn(function()
+            tween(PreviewPanel, {BackgroundTransparency = 0.15}, PREVIEW_FADE_DURATION)
+            fadeInPreviewElement(PreviewStroke, 0.3, 0)
+            fadeInPreviewElement(PreviewHeader, 0.2, 0.05)
+            fadeInPreviewElement(PreviewTitle, 0, 0.1)
+            fadeInPreviewElement(PreviewIcon, 0, 0.1)
+            fadeInPreviewElement(PreviewDivider, 0.5, 0.15)
+            fadeInPreviewElement(ViewportContainer, 0.3, 0.2)
+            fadeInPreviewElement(ViewportStroke, 0.6, 0.2)
+            fadeInPreviewElement(RotationControls, 0.4, 0.25)
+            
+            for _, child in ipairs(RotationControls:GetChildren()) do
+                if child:IsA("TextButton") then
+                    fadeInPreviewElement(child, 0, 0.3)
+                end
+            end
+            
+            for _, child in ipairs(UserInfoContainer:GetChildren()) do
+                if child:IsA("TextLabel") then
+                    fadeInPreviewElement(child, 0, 0.35)
+                end
+            end
+        end)
+        
+        if Input.Text and Input.Text ~= "" then
+            loadPreview(Input.Text)
+        end
+        
+    else
+        PreviewToggle.BackgroundColor3 = COLORS.BUTTON_NORMAL
+        
+        task.spawn(function()
+            fadeOutPreviewElement(ViewportContainer, 0)
+            fadeOutPreviewElement(RotationControls, 0.05)
+            fadeOutPreviewElement(UserInfoContainer, 0.1)
+            fadeOutPreviewElement(PreviewHeader, 0.15)
+            fadeOutPreviewElement(PreviewDivider, 0.15)
+            fadeOutPreviewElement(PreviewStroke, 0.2)
+            
+            for _, child in ipairs(ViewportContainer:GetDescendants()) do
+                if child:IsA("TextButton") then
+                    fadeOutPreviewElement(child, 0.05)
+                end
+            end
+            
+            for _, child in ipairs(UserInfoContainer:GetChildren()) do
+                if child:IsA("TextLabel") then
+                    fadeOutPreviewElement(child, 0.1)
+                end
+            end
+            
+            tween(PreviewPanel, {BackgroundTransparency = 1}, PREVIEW_FADE_DURATION + 0.2)
+            task.wait(PREVIEW_FADE_DURATION + 0.2)
+            PreviewPanel.Visible = false
+        end)
+        
+        if currentPreviewThread then 
+            task.cancel(currentPreviewThread)
+            currentPreviewThread = nil 
+        end 
+        cleanup3DPreview()
+    end
+    task.delay(PREVIEW_TOGGLE_COOLDOWN_TIME, function()
+        previewToggleCooldown = false
+    end)
+end))
+
+trackConnection(Frame:GetPropertyChangedSignal("Position"):Connect(function()
+    if settings.showPreview and PreviewPanel.Visible and not settings.uiHidden then
+        updatePreviewPosition()
+    end
+end))
+
+trackConnection(workspace.CurrentCamera:GetPropertyChangedSignal("ViewportSize"):Connect(function()
+    ensureUIInBounds(Frame, true)
+    if settings.showPreview and PreviewPanel.Visible and not settings.uiHidden then
+        updatePreviewPosition()
+    end
+end))
+
+trackConnection(Input.FocusLost:Connect(function()
+    settings.target = Input.Text
+    safeWrite(settings)
+end))
+
+trackConnection(LocalPlayer.CharacterAdded:Connect(function(char)
+    if isApplyingAvatar then
+        isApplyingAvatar = false
+        ignoreNextChange = false
+        reapplyAttempts = 0
+    end
+    
+    if timeoutMonitor then
+        task.cancel(timeoutMonitor)
+        timeoutMonitor = nil
+    end
+    
+    if not settings.enabled then
+        currentAppliedUserId = nil
+        lastApplicationTime = 0
+        lastRequestedUserId = nil
+        setState(ApplicationState.IDLE)
+        setStatus("ready")
+    else
+        setState(ApplicationState.IDLE)
+        setStatus("auto_active")
+        
+        task.spawn(function()
+            char:WaitForChild("HumanoidRootPart", 10)
+            task.wait(2)
+            
+            if settings.enabled and Input.Text ~= "" then
+                currentAppliedUserId = nil
+                applyAvatarToCharacter(Input.Text, char)
+            end
+        end)
+    end
+    
+    cleanupCharacterMonitor()
+end))
+
+
+
+trackConnection(TitleBar.InputBegan:Connect(function(input)
+    if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+        if not input.Position then return end
+        
+        dragging = true
+        dragStart = input.Position
+        startPos = Frame.Position
+    end
+end))
+
+trackConnection(UserInputService.InputEnded:Connect(function(input)
+    if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+        if dragging then
+            dragging = false
+            ensureUIInBounds(Frame, true)
+            local pos = Frame.Position
+            settings.uiPos = {x = pos.X.Scale, offsetX = pos.X.Offset, y = pos.Y.Scale, offsetY = pos.Y.Offset}
+            safeWrite(settings)
+        end
+    end
+end))
+
+local minimizedHeight = 32
+local minimizeDebounce = false
+
+local function animateMiniButton()
+    local originalPos = Mini.Position
+    local originalColor = Mini.BackgroundColor3
+    Mini.BackgroundColor3 = COLORS.ACCENT_GREEN
+    tween(Mini, {Position=originalPos + UDim2.new(0,0,0,-6)},0.12)
+    task.wait(0.2)
+    tween(Mini, {Position=originalPos},0.12)
+    task.wait(0.2)
+    Mini.BackgroundColor3 = originalColor
+end
+
+local function applyMinimized(state)
+    if minimizeDebounce then return end
+    minimizeDebounce = true
+    settings.minimized = state
+    safeWrite(settings)
+    Mini.Text = state and "+" or "-"
+    
+    task.spawn(function() animateMiniButton() end)
+    
+    if state then
+        for _,v in ipairs(Frame:GetChildren()) do
+            if v ~= TitleBar and v.Name ~= "Glow" and not v:IsA("UICorner") and not v:IsA("UIStroke") then
+                v.Visible = false
+            end
+        end
+        tween(Frame, {Size=UDim2.new(0, settings.uiSize.x, 0, minimizedHeight)},0.25)
+        task.delay(0.25, function() 
+            minimizeDebounce = false
+            ensureUIInBounds(Frame, true)
+        end)
+    else
+        tween(Frame, {Size=UDim2.new(0, settings.uiSize.x, 0, settings.uiSize.y)},0.25)
+        task.delay(0.25,function()
+            for _,v in ipairs(Frame:GetChildren()) do
+                if v ~= TitleBar and v.Name ~= "Glow" and not v:IsA("UICorner") and not v:IsA("UIStroke") then
+                    v.Visible = true
+                    if v:IsA("TextBox") or v:IsA("TextLabel") or v:IsA("TextButton") then
+                        v.TextTransparency = 1
+                        tween(v, {TextTransparency=0},0.25)
+                    end
+                end
+            end
+            minimizeDebounce = false
+            ensureUIInBounds(Frame, true)
+        end)
+    end
+end
+
+trackConnection(Mini.MouseButton1Click:Connect(function()
+    applyMinimized(not settings.minimized)
+end))
+
+updateToggleVisual(settings.enabled)
+PersistToggle.Text = settings.enabled and "Enabled" or "Disabled"
+PersistToggle.BackgroundColor3 = settings.enabled and COLORS.BUTTON_SUCCESS or COLORS.BUTTON_ERROR
+
+if settings.minimized then
+    applyMinimized(true)
+end
+if settings.uiHidden then
+    local safeX = settings.uiPos and settings.uiPos.x or 1
+    local safeOffsetX = settings.uiPos and settings.uiPos.offsetX or -280
+    local safeY = settings.uiPos and settings.uiPos.y or 0
+    local safeOffsetY = settings.uiPos and settings.uiPos.offsetY or 20
+    
+    Frame.Position = UDim2.new(safeX, safeOffsetX, safeY, safeOffsetY)
+    Frame.Visible = false
+    PreviewPanel.Visible = false
+    ToggleBtnIcon.Text = "🔒️"
+    ToggleVisibilityBtn.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
+    ToggleBtnStroke.Color = Color3.fromRGB(0, 0, 0)
+    ToggleBtnGlow.ImageColor3 = Color3.fromRGB(20, 20, 20)
+    
+    if rainbowLoop then
+        task.cancel(rainbowLoop)
+        rainbowLoop = nil
+    end
+else
+    if not rainbowLoop then
+        startRainbowAnimation()
+    end
+    
+    if settings.showPreview then
+        PreviewPanel.Visible = true
+        PreviewToggle.BackgroundColor3 = Color3.fromRGB(20, 20, 20)
+        task.spawn(function()
+            task.wait(0.1)
+            updatePreviewPosition()
+            if Input.Text and Input.Text ~= "" then
+                loadPreview(Input.Text)
+            end
+        end)
+    end
+end
+
+task.spawn(function()
+    task.wait(0.1)
+    if not settings.uiHidden then
+        ensureUIInBounds(Frame, false)
+        if settings.showPreview and PreviewPanel.Visible then
+            updatePreviewPosition()
+        end
+    end
+end)
+
+if settings.enabled and settings.target ~= "" then
+    Input.Text = settings.target
+    SetToggle(true)
+else
+    setState(ApplicationState.IDLE)
+    setStatus("ready")
+end
+
+trackConnection(Players.PlayerRemoving:Connect(function(plr)
+    if plr == LocalPlayer then
+        cleanupAll()
+        if rainbowLoop then
+            task.cancel(rainbowLoop)
+            rainbowLoop = nil
+        end
+    end
+end))
+
+if script then
+    trackConnection(script.AncestryChanged:Connect(function()
+        if not script:IsDescendantOf(game) then
+            cleanupAll()
+            if rainbowLoop then
+             task.cancel(rainbowLoop)
+             rainbowLoop = nil
+             end
+        end
+    end))
+end
+
+trackConnection(gui.AncestryChanged:Connect(function()
+    if not gui:IsDescendantOf(game) then
+        cleanupAll()
+        if rainbowLoop then
+       task.cancel(rainbowLoop)
+       rainbowLoop = nil
+        end
+    end
+end))
